@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-DASHBOARD INTERACTIF - STRATÉGIE VACCINALE GRIPPE
-Application Streamlit pour visualiser et simuler l'impact des campagnes de vaccination
+🚀 DASHBOARD COMPLET - 5 PAGES FONCTIONNELLES
+Hackathon Stratégie Vaccinale Grippe - Version Finale
 """
 
 import streamlit as st
@@ -11,941 +11,1234 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import os
+from datetime import datetime, timedelta
 from pathlib import Path
+import json
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, r2_score
+import warnings
+warnings.filterwarnings('ignore')
 
 # =============================================================================
-# CONFIGURATION DE LA PAGE
+# CONFIGURATION
 # =============================================================================
 st.set_page_config(
-    page_title="🦠 Stratégie Vaccinale Grippe France",
+    page_title="🦠 Stratégie Vaccinale Grippe",
     page_icon="💉",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# =============================================================================
-# STYLE CSS PERSONNALISÉ
-# =============================================================================
+# CSS
 st.markdown("""
 <style>
     .main-header {
-        font-size: 3rem;
-        font-weight: bold;
-        color: #1f77b4;
+        font-size: 2.8rem;
+        font-weight: 900;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
         text-align: center;
-        padding: 1rem 0;
-        background: linear-gradient(90deg, #e3f2fd 0%, #bbdefb 100%);
+        padding: 1.5rem 0;
+        margin-bottom: 1rem;
+    }
+    .stMetric {
+        background: grey;
+        padding: 1rem;
         border-radius: 10px;
-        margin-bottom: 2rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border-left: 5px solid #1f77b4;
-        margin: 1rem 0;
-    }
-    .impact-high {
-        color: #d32f2f;
-        font-weight: bold;
-    }
-    .impact-medium {
-        color: #f57c00;
-        font-weight: bold;
-    }
-    .impact-low {
-        color: #388e3c;
-        font-weight: bold;
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 2rem;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 3rem;
-        padding: 0 2rem;
-        font-size: 1.1rem;
-    }
+    .badge-critique { background: #dc3545; color: white; padding: 0.25rem 0.75rem; 
+                      border-radius: 15px; font-weight: bold; font-size: 0.85rem; display: inline-block; }
+    .badge-eleve { background: #fd7e14; color: white; padding: 0.25rem 0.75rem; 
+                   border-radius: 15px; font-weight: bold; font-size: 0.85rem; display: inline-block; }
+    .badge-moyen { background: #ffc107; color: #333; padding: 0.25rem 0.75rem; 
+                   border-radius: 15px; font-weight: bold; font-size: 0.85rem; display: inline-block; }
+    .badge-faible { background: #28a745; color: white; padding: 0.25rem 0.75rem; 
+                    border-radius: 15px; font-weight: bold; font-size: 0.85rem; display: inline-block; }
+    section[data-testid="stSidebar"] { background: linear-gradient(180deg, #667eea 0%, #764ba2 100%); }
+    section[data-testid="stSidebar"] * { color: white !important; }
 </style>
 """, unsafe_allow_html=True)
 
+# Initialisation des modèles dans session_state
+if 'model_temp' not in st.session_state:
+    st.session_state.model_temp = None
+if 'model_doses' not in st.session_state:
+    st.session_state.model_doses = None
 # =============================================================================
-# CHARGEMENT DES DONNÉES
+# FONCTIONS DE CHARGEMENT
 # =============================================================================
 
-@st.cache_data
-def load_data():
-    """Charge les données depuis les fichiers CSV"""
+@st.cache_data(ttl=3600)
+def load_all_data():
+    """Charge tous les datasets"""
     try:
-        # Chargement des données (conservez vos paths existants)
-        df_france = pd.read_csv("data/grippe-passages-aux-urgences-et-actes-sos-medecins-france.csv")
-        df_regions = pd.read_csv("data/grippe-passages-urgences-et-actes-sos-medecin_reg.csv")
-        df_departements = pd.read_csv("data/grippe-passages-aux-urgences-et-actes-sos-medecins-departement.csv")
-        df_vacc_france = pd.read_csv("data/couvertures-vaccinales-des-adolescents-et-adultes-depuis-2011-france.csv")
-        df_vacc_regions = pd.read_csv("data/couvertures-vaccinales-des-adolescents-et-adultes-depuis-2011-region.csv")
-        df_vacc_depts = pd.read_csv("data/couvertures-vaccinales-des-adolescent-et-adultes-departement.csv")
-
-        # Correction du format des semaines (ex: "2023-S08" → extraire l'année et le numéro de semaine)
-        for df in [df_regions, df_departements, df_france]:
+        data_dir = Path("data")
+        
+        df_france = pd.read_csv(data_dir / "grippe-passages-aux-urgences-et-actes-sos-medecins-france.csv")
+        df_regions = pd.read_csv(data_dir / "grippe-passages-urgences-et-actes-sos-medecin_reg.csv")
+        df_departements = pd.read_csv(data_dir / "grippe-passages-aux-urgences-et-actes-sos-medecins-departement.csv")
+        
+        df_vacc_france = pd.read_csv(data_dir / "couvertures-vaccinales-des-adolescents-et-adultes-depuis-2011-france.csv")
+        df_vacc_regions = pd.read_csv(data_dir / "couvertures-vaccinales-des-adolescents-et-adultes-depuis-2011-region.csv")
+        df_vacc_depts = pd.read_csv(data_dir / "couvertures-vaccinales-des-adolescent-et-adultes-departement.csv")
+        
+        # Prétraitement dates
+        for df in [df_france, df_regions, df_departements]:
             if '1er jour de la semaine' in df.columns:
-                # Conversion de la date
-                df['Date'] = pd.to_datetime(df['1er jour de la semaine'], dayfirst=True, errors='coerce')
-
-                # Extraction de l'année et du mois
+                df['Date'] = pd.to_datetime(df['1er jour de la semaine'], errors='coerce')
                 df['Année'] = df['Date'].dt.year
                 df['Mois'] = df['Date'].dt.month
-
-                # Traitement spécial pour la colonne "Semaine" si elle existe
-                if 'Semaine' in df.columns:
-                    # Si le format est "2023-S08" → extraire le numéro de semaine (08)
-                    if df['Semaine'].dtype == object and df['Semaine'].str.contains('-S').any():
-                        df['Semaine'] = df['Semaine'].str.split('-S').str[1].astype(int)
-                    else:
-                        # Sinon, conversion directe en entier
-                        df['Semaine'] = pd.to_numeric(df['Semaine'], errors='coerce').fillna(0).astype(int)
-
-        return df_france, df_regions, df_departements, df_vacc_france, df_vacc_regions, df_vacc_depts
-
+                df['Semaine_ISO'] = df['Date'].dt.isocalendar().week
+                df['Trimestre'] = df['Date'].dt.quarter
+        
+        return {
+            'france': df_france,
+            'regions': df_regions,
+            'departements': df_departements,
+            'vacc_france': df_vacc_france,
+            'vacc_regions': df_vacc_regions,
+            'vacc_depts': df_vacc_depts
+        }
+    
     except Exception as e:
-        st.error(f"❌ Erreur de chargement des données : {e}")
-        return None, None, None, None, None, None
+        st.error(f"❌ Erreur de chargement : {e}")
+        return None
+
+@st.cache_data
+def compute_master_dataset(data_dict):
+    """Crée le dataset maître avec KPIs"""
+    
+    df_urg = data_dict['departements'].copy()
+    df_vacc = data_dict['vacc_depts'].copy()
+    
+    # Agrégation urgences
+    df_urg_agg = df_urg.groupby(['Département Code', 'Département', 'Région']).agg({
+        'Taux de passages aux urgences pour grippe': 'mean',
+        'Taux d\'hospitalisations après passages aux urgences pour grippe': 'mean',
+        'Taux d\'actes médicaux SOS médecins pour grippe': 'mean'
+    }).reset_index()
+    
+    df_urg_agg.columns = ['Code_Dept', 'Département', 'Région', 
+                           'Taux_Urgences_Moyen', 'Taux_Hospit_Moyen', 'Taux_SOS_Moyen']
+    
+    # Vaccination récente
+    annee_max = df_vacc['Année'].max()
+    df_vacc_recent = df_vacc[df_vacc['Année'] == annee_max].copy()
+    
+@st.cache_data
+def compute_master_dataset(data_dict):
+    """Crée le dataset maître avec KPIs"""
+    
+    df_urg = data_dict['departements'].copy()
+    df_vacc = data_dict['vacc_depts'].copy()
+    
+    # Agrégation urgences
+    df_urg_agg = df_urg.groupby(['Département Code', 'Département', 'Région']).agg({
+        'Taux de passages aux urgences pour grippe': 'mean',
+        'Taux d\'hospitalisations après passages aux urgences pour grippe': 'mean',
+        'Taux d\'actes médicaux SOS médecins pour grippe': 'mean'
+    }).reset_index()
+    
+    df_urg_agg.columns = ['Code_Dept', 'Département', 'Région', 
+                           'Taux_Urgences_Moyen', 'Taux_Hospit_Moyen', 'Taux_SOS_Moyen']
+    
+    # Vaccination récente
+    annee_max = df_vacc['Année'].max()
+    df_vacc_recent = df_vacc[df_vacc['Année'] == annee_max].copy()
+    
+    # Fusion
+    df_master = df_urg_agg.merge(
+        df_vacc_recent[['Département Code', 'Grippe 65 ans et plus', 
+                        'Grippe 65-74 ans', 'Grippe 75 ans et plus', 'Année']],
+        left_on='Code_Dept',
+        right_on='Département Code',
+        how='left'
+    )
+    
+    df_master.rename(columns={
+        'Grippe 65 ans et plus': 'Couverture_65plus',
+        'Grippe 65-74 ans': 'Couverture_65_74',
+        'Grippe 75 ans et plus': 'Couverture_75plus'
+    }, inplace=True)
+    
+    # === DIAGNOSTIC ET IMPUTATION AMÉLIORÉE ===
+    nb_avant = len(df_master)
+    print(f"\n   📊 Diagnostic NaN après fusion : {nb_avant} départements")
+    
+    for col in ['Couverture_65plus', 'Couverture_65_74', 'Couverture_75plus']:
+        nb_nan = df_master[col].isna().sum()
+        if nb_nan > 0:
+            mediane = df_master[col].median()
+            print(f"   ⚠️  {nb_nan} NaN dans {col} → Imputation par médiane ({mediane:.1f}%)")
+            df_master[col].fillna(mediane, inplace=True)
+        else:
+            print(f"   ✓ {col} : aucun NaN")
+    
+    # Vérifier que l'imputation a fonctionné
+    assert df_master['Couverture_65plus'].isna().sum() == 0, "Erreur : NaN restants dans Couverture_65plus"
+    
+    # Calcul KPIs (sécurisé)
+    df_master['Score_Impact'] = (
+        df_master['Taux_Urgences_Moyen'] * 
+        (100 - df_master['Couverture_65plus']) / 10
+    ).round(1)
+    
+    moyenne_nationale = df_master['Couverture_65plus'].mean()
+    df_master['Gap_Vaccinal'] = (moyenne_nationale - df_master['Couverture_65plus']).round(1)
+    
+    coef_calibre = -0.65
+    df_master['Potentiel_Reduction_Urgences'] = (
+        df_master['Gap_Vaccinal'] * coef_calibre
+    ).abs().round(1)
+    
+    urgences_norm = (df_master['Taux_Urgences_Moyen'] / df_master['Taux_Urgences_Moyen'].max()) * 100
+    gap_norm = ((100 - df_master['Couverture_65plus']) / 50) * 100
+    hospit_norm = (df_master['Taux_Hospit_Moyen'] / df_master['Taux_Hospit_Moyen'].max()) * 100
+    
+    df_master['Indice_Vulnerabilite'] = (
+        urgences_norm * 0.4 +
+        gap_norm.clip(0, 100) * 0.3 +
+        hospit_norm * 0.3
+    ).round(1)
+    
+    df_master['Priorité_Action'] = (
+        df_master['Score_Impact'] * 0.5 +
+        df_master['Gap_Vaccinal'] * 10 +
+        df_master['Taux_Hospit_Moyen'] * 25
+    ).round(0)
+    
+    df_master['Catégorie_Risque'] = pd.cut(
+        df_master['Score_Impact'],
+        bins=[0, 250, 500, 750, float('inf')],
+        labels=['Faible', 'Moyen', 'Élevé', 'Critique']
+    )
+    
+    df_master['Population_65plus_Estimee'] = 100000 * 0.20
+    df_master['Doses_Necessaires'] = (
+        df_master['Population_65plus_Estimee'] * 
+        df_master['Gap_Vaccinal'] / 100
+    ).round(0)
+    
+    # === NETTOYAGE FINAL ===
+    # Supprimer les lignes avec NaN dans colonnes critiques pour ML
+    colonnes_critiques = ['Taux_Urgences_Moyen', 'Taux_Hospit_Moyen', 'Score_Impact', 
+                          'Couverture_65plus', 'Gap_Vaccinal', 'Doses_Necessaires']
+    
+    nb_nan_final = df_master[colonnes_critiques].isna().any(axis=1).sum()
+    if nb_nan_final > 0:
+        print(f"   ⚠️  {nb_nan_final} départements avec NaN résiduels → Suppression")
+        df_master = df_master.dropna(subset=colonnes_critiques)
+    
+    print(f"   ✓ Dataset final : {len(df_master)} départements propres\n")
+    
+    df_master = df_master.sort_values('Priorité_Action', ascending=False).reset_index(drop=True)
+    df_master['Année_Référence'] = annee_max
+    
+    return df_master  # ← FERMETURE DE LA FONCTION
 
 
-# Chargement
-df_france, df_regions, df_departements, df_vacc_france, df_vacc_regions, df_vacc_depts = load_data()
+# Fonction normalisation codes départements
+def normaliser_code_dept(code):
+    """Normalise les codes départements pour la carte"""
+    if pd.isna(code):
+        return None
+    code_str = str(code).strip()
+    if code_str.isdigit():
+        return code_str.zfill(2)
+    return code_str
+
+# Fonction normalisation codes départements
+def normaliser_code_dept(code):
+    """Normalise les codes départements pour la carte"""
+    if pd.isna(code):
+        return None
+    code_str = str(code).strip()
+    if code_str.isdigit():
+        return code_str.zfill(2)
+    return code_str
 
 # =============================================================================
-# SIDEBAR - NAVIGATION
+# CHARGEMENT DONNÉES
 # =============================================================================
-st.sidebar.markdown("## 📋 Navigation")
-page = st.sidebar.radio(
-    "Sélectionnez une vue :",
-    ["🏠 Accueil", "📊 Vue Nationale", "🗺️ Vue Régionale", 
-     "📍 Vue Départementale", "🎯 Simulation Impact", "💡 Recommandations"]
-)
+
+data = load_all_data()
+if data is None:
+    st.error("❌ Impossible de charger les données")
+    st.stop()
+
+df_master = compute_master_dataset(data)
+
+# =============================================================================
+# SIDEBAR
+# =============================================================================
+
+st.sidebar.markdown("## 🎯 Navigation")
+
+pages = {
+    "🏠 Tableau de Bord": "dashboard",
+    "🗺️ Cartographie": "map",
+    "📈 Prédictions ML": "predictions",
+    "🎯 Simulateur": "simulator",
+    "📥 Export": "export"
+}
+
+page = st.sidebar.radio("Choisissez une page :", list(pages.keys()), label_visibility="collapsed")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### ℹ️ À propos")
-st.sidebar.info(
-    "**Hackathon Stratégie Vaccinale Grippe**\n\n"
-    "Dashboard interactif pour optimiser les campagnes de vaccination "
-    "contre la grippe en France."
+st.sidebar.markdown("### 🔧 Filtres Globaux")
+
+annees_disponibles = sorted(data['departements']['Année'].dropna().unique())
+if len(annees_disponibles) > 0:
+    annee_selectionnee = st.sidebar.selectbox("📅 Année", ['Toutes'] + [int(a) for a in annees_disponibles], index=0)
+else:
+    annee_selectionnee = 'Toutes'
+
+regions_disponibles = ['Toutes'] + sorted(df_master['Région'].unique().tolist())
+region_filter = st.sidebar.selectbox("📍 Région", regions_disponibles)
+
+risque_filter = st.sidebar.multiselect(
+    "⚠️ Niveau de risque",
+    ['Critique', 'Élevé', 'Moyen', 'Faible'],
+    default=['Critique', 'Élevé']
 )
 
+# Appliquer filtres
+df_filtered = df_master.copy()
+if region_filter != 'Toutes':
+    df_filtered = df_filtered[df_filtered['Région'] == region_filter]
+if risque_filter:
+    df_filtered = df_filtered[df_filtered['Catégorie_Risque'].isin(risque_filter)]
+
+st.sidebar.markdown("---")
+st.sidebar.info(f"""
+**📊 Données filtrées**
+- {len(df_filtered)} départements
+- Année : {annee_selectionnee}
+- Région : {region_filter}
+""")
+
 # =============================================================================
-# PAGE ACCUEIL
+# PAGE 1 : TABLEAU DE BORD
 # =============================================================================
-if page == "🏠 Accueil":
-    st.markdown('<div class="main-header">🦠 Stratégie Vaccinale Grippe France 💉</div>', 
-                unsafe_allow_html=True)
+
+if pages[page] == "dashboard":
+    st.markdown('<div class="main-header">🏠 Tableau de Bord Stratégique</div>', unsafe_allow_html=True)
     
-    st.markdown("""
-    ### 🎯 Objectifs du Projet
-    
-    Ce dashboard permet de :
-    - 📈 **Analyser** les tendances de la grippe en France
-    - 🗺️ **Identifier** les zones à risque et sous-vaccinées
-    - 🎯 **Optimiser** la distribution des vaccins
-    - 💰 **Calculer** le ROI des campagnes de vaccination
-    - 🚀 **Simuler** l'impact de différentes stratégies
-    """)
-    
-    # Métriques clés
-    col1, col2, col3, col4 = st.columns(4)
+    # KPIs
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
-        st.metric(
-            label="📊 Datasets",
-            value="6",
-            delta="Multiéchelles"
-        )
+        couv_moyenne = df_master['Couverture_65plus'].mean()
+        delta_couv = couv_moyenne - df_master['Couverture_65plus'].quantile(0.25)
+        st.metric("💉 Couverture Moyenne 65+", f"{couv_moyenne:.1f}%", f"+{delta_couv:.1f}% vs Q1")
     
     with col2:
-        if df_france is not None:
-            st.metric(
-                label="📅 Période couverte",
-                value="2011-2024",
-                delta="14 ans"
-            )
+        urgences_tot = df_master['Taux_Urgences_Moyen'].sum()
+        st.metric("🏥 Passages Urgences", f"{urgences_tot:,.0f}", "cumul/100k hab.")
     
     with col3:
-        if df_vacc_france is not None:
-            last_cov = df_vacc_france['Grippe 65 ans et plus'].iloc[-1]
-            st.metric(
-                label="💉 Couverture 65+ (2024)",
-                value=f"{last_cov:.1f}%",
-                delta=None
-            )
+        dept_critiques = (df_master['Catégorie_Risque'] == 'Critique').sum()
+        pct_critiques = dept_critiques / len(df_master) * 100
+        st.metric("🚨 Dép. Critiques", dept_critiques, f"{pct_critiques:.1f}%", delta_color="inverse")
     
     with col4:
-        st.metric(
-            label="🏥 Régions analysées",
-            value="18",
-            delta="Métropole + DOM"
-        )
+        potentiel_total = df_master['Potentiel_Reduction_Urgences'].sum()
+        st.metric("📉 Potentiel Réduction", f"{potentiel_total:,.0f}", "urgences/an")
+    
+    with col5:
+        doses_totales = df_master['Doses_Necessaires'].sum()
+        st.metric("💉 Doses Nécessaires", f"{doses_totales/1000:.0f}k", "objectif 75%")
     
     st.markdown("---")
     
-    # Problématiques clés
-    st.markdown("### 🔍 Problématiques Adressées")
+    # Tabs
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📈 Évolution", "💉 Couverture", "🏥 Urgences", "🎯 Départements", "🌡️ Heatmap"
+    ])
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        **1. Prédiction des besoins** 🔮
-        - Anticiper les besoins en vaccins par territoire
-        - Éviter les ruptures de stock
+    with tab1:
+        st.markdown("### 📈 Évolution Temporelle")
+        col1, col2 = st.columns([3, 1])
         
-        **2. Optimisation de la distribution** 📦
-        - Cibler les pharmacies prioritaires
-        - Réduire les coûts logistiques
-        """)
-    
-    with col2:
-        st.markdown("""
-        **3. Amélioration de l'accès aux soins** 🏥
-        - Identifier les zones sous-vaccinées
-        - Proposer des actions ciblées
-        
-        **4. Anticipation de la pression hospitalière** 🚑
-        - Corréler vaccination et passages aux urgences
-        - Quantifier l'impact économique
-        """)
-    
-    st.markdown("---")
-    
-    # Guide d'utilisation
-    with st.expander("📖 Guide d'Utilisation", expanded=False):
-        st.markdown("""
-        **Navigation :**
-        - Utilisez le menu latéral pour naviguer entre les vues
-        - Chaque vue propose des filtres interactifs
-        
-        **Vues disponibles :**
-        - 📊 **Vue Nationale** : Tendances globales en France
-        - 🗺️ **Vue Régionale** : Comparaison entre régions
-        - 📍 **Vue Départementale** : Analyse fine par département
-        - 🎯 **Simulation Impact** : Calculateur d'impact des campagnes
-        - 💡 **Recommandations** : Actions prioritaires
-        """)
-
-# =============================================================================
-# PAGE VUE NATIONALE
-# =============================================================================
-elif page == "📊 Vue Nationale":
-    st.header("📊 Analyse Nationale - France")
-    
-    if df_france is None or df_vacc_france is None:
-        st.error("❌ Données non disponibles")
-    else:
-        # Préparer les données
-        df_france['Date'] = pd.to_datetime(df_france['1er jour de la semaine'])
-        df_france['Année'] = df_france['Date'].dt.year
-        
-        # Filtres
-        st.sidebar.markdown("### 🔧 Filtres")
-        annees = sorted(df_france['Année'].unique())
-        annee_selectionnee = st.sidebar.slider(
-            "Sélectionner une année",
-            min_value=int(min(annees)),
-            max_value=int(max(annees)),
-            value=(int(min(annees)), int(max(annees)))
-        )
-        
-        df_filtered = df_france[
-            (df_france['Année'] >= annee_selectionnee[0]) & 
-            (df_france['Année'] <= annee_selectionnee[1])
-        ]
-        
-        # Onglets
-        tab1, tab2, tab3 = st.tabs(["📈 Évolution Temporelle", "👥 Classes d'Âge", "💉 Couverture Vaccinale"])
-        
-        with tab1:
-            st.subheader("Évolution du Taux de Passages aux Urgences pour Grippe")
-            
-            # Agréger par semaine
-            df_agg = df_filtered.groupby('Date').agg({
-                'Taux de passages aux urgences pour grippe': 'mean',
-                'Taux d\'hospitalisations après passages aux urgences pour grippe': 'mean'
-            }).reset_index()
-            
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=df_agg['Date'],
-                y=df_agg['Taux de passages aux urgences pour grippe'],
-                mode='lines',
-                name='Passages aux urgences',
-                line=dict(color='#1f77b4', width=2),
-                fill='tozeroy',
-                fillcolor='rgba(31, 119, 180, 0.2)'
-            ))
-            
-            fig.add_trace(go.Scatter(
-                x=df_agg['Date'],
-                y=df_agg['Taux d\'hospitalisations après passages aux urgences pour grippe'],
-                mode='lines',
-                name='Hospitalisations',
-                line=dict(color='#ff7f0e', width=2)
-            ))
-            
-            fig.update_layout(
-                title="Taux de passages aux urgences et hospitalisations (pour 100k habitants)",
-                xaxis_title="Date",
-                yaxis_title="Taux pour 100k habitants",
-                hovermode='x unified',
-                height=500
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Statistiques descriptives
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric(
-                    "📊 Taux moyen urgences",
-                    f"{df_filtered['Taux de passages aux urgences pour grippe'].mean():.1f}",
-                    help="Pour 100k habitants"
-                )
-            with col2:
-                st.metric(
-                    "🏥 Taux moyen hospitalisations",
-                   f"{df_filtered['Taux d\'hospitalisations après passages aux urgences pour grippe'].mean():.1f}",
-                    help="Pour 100k habitants"
-                )
-            with col3:
-                st.metric(
-                    "📈 Variabilité (std)",
-                    f"{df_filtered['Taux de passages aux urgences pour grippe'].std():.1f}"
-                )
-        
-        with tab2:
-            st.subheader("Comparaison par Classes d'Âge")
-            
-            # Filtrer par classe d'âge
-            classes_age = df_filtered['Classe d\'âge'].unique()
-            classe_selectionnee = st.multiselect(
-                "Sélectionner les classes d'âge",
-                options=sorted(classes_age),
-                default=list(sorted(classes_age)[:3])
-            )
-            
-            if classe_selectionnee:
-                df_age = df_filtered[df_filtered['Classe d\'âge'].isin(classe_selectionnee)]
-                df_age_agg = df_age.groupby(['Date', 'Classe d\'âge']).agg({
-                    'Taux de passages aux urgences pour grippe': 'mean'
-                }).reset_index()
-                
-                fig = px.line(
-                    df_age_agg,
-                    x='Date',
-                    y='Taux de passages aux urgences pour grippe',
-                    color='Classe d\'âge',
-                    title="Évolution par classe d'âge",
-                    labels={'Taux de passages aux urgences pour grippe': 'Taux pour 100k habitants'}
-                )
-                fig.update_layout(height=500, hovermode='x unified')
-                st.plotly_chart(fig, use_container_width=True)
-        
-        with tab3:
-            st.subheader("Évolution de la Couverture Vaccinale")
-            
-            # Graphique couverture vaccinale
-            fig = go.Figure()
-            
-            fig.add_trace(go.Scatter(
-                x=df_vacc_france['Année'],
-                y=df_vacc_france['Grippe 65 ans et plus'],
-                mode='lines+markers',
-                name='65 ans et plus',
-                line=dict(color='#2ca02c', width=3),
-                marker=dict(size=8)
-            ))
-            
-            fig.add_trace(go.Scatter(
-                x=df_vacc_france['Année'],
-                y=df_vacc_france['Grippe moins de 65 ans à risque'],
-                mode='lines+markers',
-                name='<65 ans à risque',
-                line=dict(color='#d62728', width=3),
-                marker=dict(size=8)
-            ))
-            
-            fig.update_layout(
-                title="Couverture vaccinale contre la grippe (%)",
-                xaxis_title="Année",
-                yaxis_title="Taux de couverture (%)",
-                hovermode='x unified',
-                height=500
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Objectif de santé publique
-            objectif_65_plus = 75.0
-            derniere_couverture = df_vacc_france['Grippe 65 ans et plus'].iloc[-1]
-            ecart = objectif_65_plus - derniere_couverture
-            
-            st.info(f"""
-            🎯 **Objectif de Santé Publique** : {objectif_65_plus}% pour les 65+  
-            📊 **Couverture actuelle** : {derniere_couverture:.1f}%  
-            📉 **Écart** : {ecart:.1f} points de pourcentage
-            """)
-
-# =============================================================================
-# PAGE VUE RÉGIONALE
-# =============================================================================
-elif page == "🗺️ Vue Régionale":
-    st.header("🗺️ Analyse Régionale")
-    
-    if df_regions is None or df_vacc_regions is None:
-        st.error("❌ Données non disponibles")
-    else:
-        # Préparer les données
-        df_regions['Date'] = pd.to_datetime(df_regions['1er jour de la semaine'])
-        df_regions['Année'] = df_regions['Date'].dt.year
-        
-        # Filtres sidebar
-        st.sidebar.markdown("### 🔧 Filtres")
-        regions_list = sorted(df_regions['Région'].dropna().unique())
-        region_selectionnee = st.sidebar.multiselect(
-            "Sélectionner des régions",
-            options=regions_list,
-            default=regions_list[:5]
-        )
-        
-        annees = sorted(df_regions['Année'].unique())
-        annee_selectionnee = st.sidebar.slider(
-            "Année",
-            min_value=int(min(annees)),
-            max_value=int(max(annees)),
-            value=int(max(annees))
-        )
-        
-        # Filtrer les données
-        df_reg_filtered = df_regions[
-            (df_regions['Région'].isin(region_selectionnee)) &
-            (df_regions['Année'] == annee_selectionnee)
-        ]
-        
-        # Onglets
-        tab1, tab2, tab3 = st.tabs(["📊 Classement", "📈 Évolution", "💉 Vaccination"])
-        
-        with tab1:
-            st.subheader(f"Classement des Régions - {annee_selectionnee}")
-            
-            # Agréger par région
-            df_reg_agg = df_reg_filtered.groupby('Région').agg({
-                'Taux de passages aux urgences pour grippe': 'mean',
-                'Taux d\'hospitalisations après passages aux urgences pour grippe': 'mean'
-            }).reset_index().sort_values(
+        with col1:
+            indicateur = st.selectbox("Indicateur", [
                 'Taux de passages aux urgences pour grippe',
-                ascending=False
-            )
+                'Taux d\'hospitalisations après passages aux urgences pour grippe',
+                'Taux d\'actes médicaux SOS médecins pour grippe'
+            ])
+        
+        with col2:
+            echelle = st.selectbox("Échelle", ['National', 'Régional', 'Départemental'])
+        
+        if echelle == 'National':
+            df_plot = data['france'].copy()
+            df_plot = df_plot[df_plot['Date'].notna()].sort_values('Date')
             
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                y=df_reg_agg['Région'],
-                x=df_reg_agg['Taux de passages aux urgences pour grippe'],
+            fig = px.line(df_plot, x='Date', y=indicateur, 
+                         color='Classe d\'âge' if 'Classe d\'âge' in df_plot.columns else None,
+                         title=f"Évolution Nationale - {indicateur}")
+            fig.update_layout(height=500, hovermode='x unified')
+            st.plotly_chart(fig, key="evolution_national", width="stretch")
+        
+        elif echelle == 'Régional':
+            df_plot = data['regions'].copy()
+            df_plot = df_plot[df_plot['Date'].notna()].sort_values('Date')
+            regions = st.multiselect("Régions", sorted(df_plot['Région'].unique()), 
+                                    default=sorted(df_plot['Région'].unique())[:5])
+            
+            if regions:
+                df_plot_filtered = df_plot[df_plot['Région'].isin(regions)]
+                fig = px.line(df_plot_filtered, x='Date', y=indicateur, color='Région',
+                             title=f"Évolution Régionale - {indicateur}")
+                fig.update_layout(height=500, hovermode='x unified')
+                st.plotly_chart(fig, key="evolution_regional", width="stretch")
+        
+        else:
+            top10 = df_master.head(10)['Département'].tolist()
+            df_plot = data['departements'].copy()
+            df_plot = df_plot[df_plot['Date'].notna()].sort_values('Date')
+            df_plot = df_plot[df_plot['Département'].isin(top10)]
+            
+            if not df_plot.empty:
+                fig = px.line(df_plot, x='Date', y=indicateur, color='Département',
+                             title=f"Évolution Top 10 - {indicateur}")
+                fig.update_layout(height=500, hovermode='x unified')
+                st.plotly_chart(fig, key="evolution_departemental", width="stretch")
+    
+    with tab2:
+        st.markdown("### 💉 Couverture Vaccinale")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            df_regions_vacc = df_master.groupby('Région')['Couverture_65plus'].mean().reset_index()
+            df_regions_vacc = df_regions_vacc.sort_values('Couverture_65plus', ascending=False)
+            
+            fig1 = go.Figure()
+            fig1.add_trace(go.Bar(
+                y=df_regions_vacc['Région'],
+                x=df_regions_vacc['Couverture_65plus'],
                 orientation='h',
-                marker=dict(
-                    color=df_reg_agg['Taux de passages aux urgences pour grippe'],
-                    colorscale='Reds',
-                    showscale=True
-                ),
-                text=df_reg_agg['Taux de passages aux urgences pour grippe'].round(1),
-                textposition='auto'
+                marker_color='#2ecc71',
+                text=df_regions_vacc['Couverture_65plus'].round(1),
+                textposition='outside'
             ))
-            
-            fig.update_layout(
-                title="Taux de passages aux urgences pour grippe par région",
-                xaxis_title="Taux pour 100k habitants",
-                yaxis_title="Région",
-                height=600
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+            fig1.update_layout(title="Couverture 65+ par Région", 
+                              xaxis_title="Couverture (%)", height=600)
+            fig1.add_vline(x=75, line_dash="dash", line_color="red", annotation_text="Objectif 75%")
+            fig1.update_yaxes(autorange="reversed")
+            st.plotly_chart(fig1, key="couverture_region", width="stretch")
         
-        with tab2:
-            st.subheader("Évolution Temporelle par Région")
+        with col2:
+            df_vacc_temps = data['vacc_france'].copy()
+            fig2 = go.Figure()
+            fig2.add_trace(go.Scatter(x=df_vacc_temps['Année'], 
+                                     y=df_vacc_temps['Grippe 65 ans et plus'],
+                                     mode='lines+markers', name='65+ ans',
+                                     line=dict(color='#2ecc71', width=3)))
+            fig2.update_layout(title="Évolution Couverture (2011-2024)", height=600)
+            st.plotly_chart(fig2, key="couverture_evolution", width="stretch")
+    
+    with tab3:
+        st.markdown("### 🏥 Urgences & Hospitalisations")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig = px.scatter(df_master, x='Couverture_65plus', y='Taux_Urgences_Moyen',
+                           size='Score_Impact', color='Catégorie_Risque',
+                           color_discrete_map={'Faible':'#28a745', 'Moyen':'#ffc107',
+                                              'Élevé':'#fd7e14', 'Critique':'#dc3545'},
+                           hover_data=['Département', 'Région'],
+                           title="Corrélation Couverture vs Urgences")
             
-            # Sélection région pour évolution
-            region_evolution = st.selectbox(
-                "Sélectionner une région",
-                options=region_selectionnee
-            )
+            # Ligne de tendance
+            X = df_master[['Couverture_65plus']].values
+            y = df_master['Taux_Urgences_Moyen'].values
+            model = LinearRegression()
+            model.fit(X, y)
+            x_trend = np.linspace(X.min(), X.max(), 100)
+            y_trend = model.predict(x_trend.reshape(-1, 1))
             
-            df_evolution = df_regions[df_regions['Région'] == region_evolution]
-            df_evolution_agg = df_evolution.groupby('Date').agg({
-                'Taux de passages aux urgences pour grippe': 'mean'
-            }).reset_index()
-            
-            fig = px.line(
-                df_evolution_agg,
-                x='Date',
-                y='Taux de passages aux urgences pour grippe',
-                title=f"Évolution - {region_evolution}",
-                labels={'Taux de passages aux urgences pour grippe': 'Taux pour 100k habitants'}
-            )
+            fig.add_trace(go.Scatter(x=x_trend.flatten(), y=y_trend, mode='lines',
+                                    name='Tendance', line=dict(dash='dash', color='red', width=2)))
             fig.update_layout(height=500)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, key="scatter_couverture_urgences", width="stretch")
         
-        with tab3:
-            st.subheader("Couverture Vaccinale Régionale")
-            
-            # Dernière année disponible
-            derniere_annee = df_vacc_regions['Année'].max()
-            df_vacc_last = df_vacc_regions[df_vacc_regions['Année'] == derniere_annee]
-            
-            fig = px.bar(
-                df_vacc_last.sort_values('Grippe 65 ans et plus', ascending=False),
-                x='Région',
-                y='Grippe 65 ans et plus',
-                title=f"Couverture vaccinale 65+ par région ({derniere_annee})",
-                labels={'Grippe 65 ans et plus': 'Taux de couverture (%)'},
-                color='Grippe 65 ans et plus',
-                color_continuous_scale='Blues'  # Notez le changement ici
-            )
-            fig.update_layout(height=500, xaxis_tickangle=-45)
-            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            fig = px.box(df_master, x='Catégorie_Risque', y='Taux_Hospit_Moyen',
+                        color='Catégorie_Risque',
+                        color_discrete_map={'Faible':'#28a745', 'Moyen':'#ffc107',
+                                           'Élevé':'#fd7e14', 'Critique':'#dc3545'},
+                        title="Taux Hospitalisation par Risque")
+            fig.update_layout(height=500, showlegend=False)
+            st.plotly_chart(fig, key="boxplot_hospit_risque", width="stretch")
+    
+    with tab4:
+        st.markdown("### 🎯 Départements Prioritaires")
+        metrique = st.selectbox("Classer par", ['Priorité_Action', 'Score_Impact', 
+                                                 'Gap_Vaccinal', 'Taux_Urgences_Moyen'])
+        
+        df_top20 = df_filtered.sort_values(metrique, ascending=False).head(20)
+        
+        colors_map = {'Critique':'#dc3545', 'Élevé':'#fd7e14', 
+                     'Moyen':'#ffc107', 'Faible':'#28a745'}
+        colors = [colors_map.get(cat, '#6c757d') for cat in df_top20['Catégorie_Risque']]
+        
+        fig = go.Figure()
+        fig.add_trace(go.Bar(y=df_top20['Département'], x=df_top20[metrique],
+                            orientation='h', marker_color=colors,
+                            text=df_top20[metrique].round(1), textposition='outside'))
+        fig.update_layout(title=f"Top 20 - {metrique}", height=700)
+        fig.update_yaxes(autorange="reversed")
+        st.plotly_chart(fig, key="top20_departements", width="stretch")
+        
+        st.dataframe(df_top20[['Département', 'Région', 'Catégorie_Risque',
+                               'Couverture_65plus', 'Gap_Vaccinal', 'Score_Impact']], 
+                    use_container_width=True, height=400)
+    
+    with tab5:
+        st.markdown("### 🌡️ Heatmap Régionale")
+        
+        df_hm = df_master.groupby('Région').agg({
+            'Taux_Urgences_Moyen': 'mean',
+            'Couverture_65plus': 'mean',
+            'Score_Impact': 'mean',
+            'Gap_Vaccinal': 'mean',
+            'Taux_Hospit_Moyen': 'mean'
+        }).reset_index()
+        
+        # Normaliser
+        for col in ['Taux_Urgences_Moyen', 'Score_Impact', 'Taux_Hospit_Moyen', 'Gap_Vaccinal']:
+            df_hm[f'{col}_norm'] = ((df_hm[col] - df_hm[col].min()) / 
+                                   (df_hm[col].max() - df_hm[col].min()) * 100)
+        
+        z_data = df_hm[['Taux_Urgences_Moyen_norm', 'Gap_Vaccinal_norm', 
+                        'Score_Impact_norm', 'Taux_Hospit_Moyen_norm']].T.values
+        
+        fig = go.Figure(data=go.Heatmap(
+            z=z_data,
+            x=df_hm['Région'],
+            y=['Taux Urgences', 'Gap Vaccinal', 'Score Impact', 'Taux Hospit.'],
+            colorscale='RdYlGn_r',
+            text=df_hm[['Taux_Urgences_Moyen', 'Gap_Vaccinal', 
+                        'Score_Impact', 'Taux_Hospit_Moyen']].T.values.round(1),
+            texttemplate='%{text}',
+            textfont=dict(size=9)
+        ))
+        fig.update_layout(title="Heatmap Régionale", height=500)
+        fig.update_xaxes(tickangle=-45)
+        st.plotly_chart(fig, key="heatmap_regionale", width="stretch")
 
 # =============================================================================
-# PAGE VUE DÉPARTEMENTALE
+# PAGE 2 : CARTOGRAPHIE
 # =============================================================================
-elif page == "📍 Vue Départementale":
-    st.header("📍 Analyse Départementale")
+
+elif pages[page] == "map":
+    st.markdown('<div class="main-header">🗺️ Cartographie Intelligente</div>', unsafe_allow_html=True)
     
-    if df_departements is None or df_vacc_depts is None:
-        st.error("❌ Données non disponibles")
-    else:
-        # Préparer les données
-        df_departements['Date'] = pd.to_datetime(df_departements['1er jour de la semaine'])
-        df_departements['Année'] = df_departements['Date'].dt.year
+    st.markdown("### Carte Interactive de France")
+    
+    # Sélection indicateur
+    indicateur_carte = st.selectbox("Indicateur à afficher", [
+        'Score_Impact', 'Priorité_Action', 'Couverture_65plus', 
+        'Gap_Vaccinal', 'Taux_Urgences_Moyen', 'Indice_Vulnerabilite'
+    ])
+    
+    labels = {
+        'Score_Impact': "Score d'Impact",
+        'Priorité_Action': "Priorité d'Action",
+        'Couverture_65plus': "Couverture 65+ (%)",
+        'Gap_Vaccinal': "Gap Vaccinal (pts)",
+        'Taux_Urgences_Moyen': "Taux Urgences",
+        'Indice_Vulnerabilite': "Indice Vulnérabilité"
+    }
+    
+    # Normaliser codes
+    df_map = df_master.copy()
+    df_map['Code_Dept_Clean'] = df_map['Code_Dept'].apply(normaliser_code_dept)
+    
+    # Télécharger GeoJSON
+    try:
+        import urllib.request
+        geojson_url = "https://france-geojson.gregoiredavid.fr/repo/departements.geojson"
+        with urllib.request.urlopen(geojson_url) as url:
+            departements_geojson = json.loads(url.read().decode())
         
-        # Filtres
-        st.sidebar.markdown("### 🔧 Filtres")
-        
-        # Sélection région pour filtrer départements
-        regions_list = sorted(df_departements['Région'].dropna().unique())
-        region_filter = st.sidebar.selectbox(
-            "Filtrer par région",
-            options=['Toutes'] + regions_list
-        )
-        
-        if region_filter != 'Toutes':
-            depts_list = sorted(
-                df_departements[df_departements['Région'] == region_filter]['Département'].dropna().unique()
-            )
+        # Colorscale
+        if indicateur_carte in ['Couverture_65plus']:
+            colorscale = 'RdYlGn'
         else:
-            depts_list = sorted(df_departements['Département'].dropna().unique())
+            colorscale = 'RdYlGn_r'
         
-        dept_selectionne = st.sidebar.selectbox(
-            "Sélectionner un département",
-            options=depts_list
+        fig = go.Figure(go.Choroplethmapbox(
+            geojson=departements_geojson,
+            locations=df_map['Code_Dept_Clean'],
+            z=df_map[indicateur_carte],
+            featureidkey="properties.code",
+            colorscale=colorscale,
+            marker_opacity=0.7,
+            marker_line_width=1,
+            marker_line_color='white',
+            colorbar=dict(title=labels[indicateur_carte]),
+            text=df_map['Département'],
+            hovertemplate='<b>%{text}</b><br>' + 
+                         f'{labels[indicateur_carte]}: %{{z:.1f}}<br>' +
+                         '<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            mapbox_style="carto-positron",
+            mapbox_zoom=4.8,
+            mapbox_center={"lat": 46.8, "lon": 2.5},
+            height=700,
+            margin={"r":0,"t":50,"l":0,"b":0}
         )
         
-        annees = sorted(df_departements['Année'].unique())
-        annee_selectionnee = st.sidebar.slider(
-            "Année",
-            min_value=int(min(annees)),
-            max_value=int(max(annees)),
-            value=int(max(annees))
-        )
+        st.plotly_chart(fig, key="carte_france", width="stretch")
         
-        # Filtrer
-        df_dept = df_departements[
-            (df_departements['Département'] == dept_selectionne) &
-            (df_departements['Année'] == annee_selectionnee)
-        ]
-        
-        # Affichage
-        st.subheader(f"📍 {dept_selectionne}")
-        
-        # Métriques
+        # Stats
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            taux_moy = df_dept['Taux de passages aux urgences pour grippe'].mean()
-            st.metric("📊 Taux moyen urgences", f"{taux_moy:.1f}")
+            top_dept = df_map.loc[df_map[indicateur_carte].idxmax()]
+            st.error(f"""
+            **🔴 Maximum**
+            
+            {top_dept['Département']}
+            
+            {labels[indicateur_carte]}: **{top_dept[indicateur_carte]:.1f}**
+            """)
         
         with col2:
-            taux_hospit = df_dept['Taux d\'hospitalisations après passages aux urgences pour grippe'].mean()
-            st.metric("🏥 Taux hospitalisations", f"{taux_hospit:.1f}")
+            bottom_dept = df_map.loc[df_map[indicateur_carte].idxmin()]
+            st.success(f"""
+            **🟢 Minimum**
+            
+            {bottom_dept['Département']}
+            
+            {labels[indicateur_carte]}: **{bottom_dept[indicateur_carte]:.1f}**
+            """)
         
         with col3:
-            # Couverture vaccinale
-            df_vacc_dept = df_vacc_depts[
-                (df_vacc_depts['Département'] == dept_selectionne) &
-                (df_vacc_depts['Année'] == annee_selectionnee)
-            ]
-            if not df_vacc_dept.empty:
-                cov = df_vacc_dept['Grippe 65 ans et plus'].values[0]
-                st.metric("💉 Couverture 65+", f"{cov:.1f}%")
-        
-        # Graphique évolution
-        st.subheader("Évolution sur l'année")
-        
-        df_dept_sorted = df_dept.sort_values('Date')
-        fig = px.line(
-            df_dept_sorted,
-            x='Date',
-            y='Taux de passages aux urgences pour grippe',
-            title=f"Passages aux urgences pour grippe - {dept_selectionne}",
-            labels={'Taux de passages aux urgences pour grippe': 'Taux pour 100k habitants'}
-        )
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Comparaison avec la région
-        st.subheader("Comparaison avec la région")
-        
-        region_dept = df_departements[df_departements['Département'] == dept_selectionne]['Région'].iloc[0]
-        df_region_comp = df_regions[
-            (df_regions['Région'] == region_dept) &
-            (df_regions['Année'] == annee_selectionnee)
-        ]
-        
-        taux_region = df_region_comp['Taux de passages aux urgences pour grippe'].mean()
-        ecart = ((taux_moy - taux_region) / taux_region * 100) if taux_region > 0 else 0
+            mean_val = df_map[indicateur_carte].mean()
+            st.warning(f"""
+            **📊 Moyenne**
+            
+            Nationale
+            
+            {labels[indicateur_carte]}: **{mean_val:.1f}**
+            """)
+    
+    except Exception as e:
+        st.error(f"Erreur carte : {e}")
+        st.info("Affichage alternatif : Top 10 départements")
         
         col1, col2 = st.columns(2)
+        
         with col1:
-            st.metric("Département", f"{taux_moy:.1f}")
+            st.markdown("### 🔝 Top 10")
+            top10 = df_map.nlargest(10, indicateur_carte)
+            fig = go.Figure(data=[go.Bar(y=top10['Département'], x=top10[indicateur_carte],
+                                        orientation='h', marker_color='#dc3545')])
+            fig.update_layout(height=400)
+            fig.update_yaxes(autorange="reversed")
+            st.plotly_chart(fig, key="carte_fallback_top10", width="stretch")
+        
         with col2:
-            st.metric("Région moyenne", f"{taux_region:.1f}", delta=f"{ecart:+.1f}%")
+            st.markdown("### 🔻 Bottom 10")
+            bottom10 = df_map.nsmallest(10, indicateur_carte)
+            fig = go.Figure(data=[go.Bar(y=bottom10['Département'], x=bottom10[indicateur_carte],
+                                        orientation='h', marker_color='#28a745')])
+            fig.update_layout(height=400)
+            fig.update_yaxes(autorange="reversed")
+            st.plotly_chart(fig, key="carte_fallback_bottom10", width="stretch")
 
 # =============================================================================
-# PAGE SIMULATION IMPACT
+# PAGE 3 : PRÉDICTIONS ML
 # =============================================================================
-elif page == "🎯 Simulation Impact":
-    st.header("🎯 Simulateur d'Impact des Campagnes de Vaccination")
-    
-    st.markdown("""
-    Cet outil permet de **simuler l'impact** d'une campagne de vaccination ciblée
-    sur les passages aux urgences et le retour sur investissement (ROI).
-    """)
-    
-    # Paramètres de simulation
-    st.subheader("⚙️ Paramètres de la Campagne")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        doses_total = st.number_input(
-            "💉 Nombre total de doses à distribuer",
-            min_value=10000,
-            max_value=10000000,
-            value=100000,
-            step=10000,
-            help="Nombre total de doses de vaccin disponibles"
+
+if pages[page] == "predictions":
+    st.markdown('<div class="main-header">📈 Prédictions Machine Learning</div>', unsafe_allow_html=True)
+
+    # === 1. Création des onglets ===
+    tab1, tab2 = st.tabs([
+        "📈 Prédictions Temporelles",
+        "🗺️ Prédictions Géographiques"
+    ])
+
+    # === 2. Contenu de l'onglet 1 : Prédictions Temporelles ===
+    with tab1:
+        st.markdown("### 📈 Prédictions Temporelles")
+
+        # Sélection simplifiée
+        niveau = st.selectbox("Niveau géographique", ["National"], key="niveau_temp")
+        indicateur = st.selectbox(
+            "Indicateur",
+            ['Taux de passages aux urgences pour grippe'],
+            key="indicateur_temp"
         )
-        
-        cout_dose = st.number_input(
-            "💰 Coût par dose (€)",
-            min_value=5.0,
-            max_value=50.0,
-            value=15.0,
-            step=1.0
+
+        # Préparation des données
+        df = data['france'].copy()
+        df = df.dropna(subset=['Date', indicateur])
+        df['Année'] = df['Date'].dt.year
+        df_agg = df.groupby('Année')[indicateur].mean().reset_index()
+
+        # Vérification des données
+        if len(df_agg) < 2:
+            st.warning("Données insuffisantes - Utilisation de données d'exemple")
+            df_agg = pd.DataFrame({
+                'Année': [2020, 2021, 2022, 2023],
+                indicateur: [50, 60, 55, 65]
+            })
+
+        # Entraînement du modèle (LinearRegression)
+        X = df_agg['Année'].values.reshape(-1, 1)
+        y = df_agg[indicateur].values
+
+        if st.session_state.model_temp is None:
+            st.session_state.model_temp = LinearRegression()
+            st.session_state.model_temp.fit(X, y)
+
+        # Prédictions
+        annees_futures = np.array([2024, 2025, 2026, 2027, 2028]).reshape(-1, 1)
+        predictions = st.session_state.model_temp.predict(annees_futures)
+
+        # Visualisation
+        fig = px.line(df_agg, x='Année', y=indicateur, title="Données historiques et prédictions")
+        fig.add_scatter(
+            x=annees_futures.flatten(),
+            y=predictions,
+            mode='lines+markers',
+            name='Prédiction',
+            line=dict(color='red', dash='dash')
         )
+        st.plotly_chart(fig, use_container_width=True)
+
     
-    with col2:
-        efficacite = st.slider(
-            "📊 Efficacité vaccinale (%)",
-            min_value=30,
-            max_value=90,
-            value=60,
-            help="Pourcentage de réduction des passages aux urgences chez les vaccinés"
-        )
-        
-        cout_passage_urgence = st.number_input(
-            "🏥 Coût moyen d'un passage aux urgences (€)",
-            min_value=50,
-            max_value=1000,
-            value=200,
-            step=50
-        )
-    
-    st.markdown("---")
-    
-    # Stratégies de ciblage
-    st.subheader("🎯 Stratégie de Ciblage")
-    
-    strategie = st.radio(
-        "Choisir une stratégie",
-        [
-            "🌍 Distribution homogène (pas de ciblage)",
-            "🔴 Ciblage départements à haut risque",
-            "🎯 Ciblage zones sous-vaccinées",
-            "🧠 Ciblage optimisé (IA)"
-        ]
-    )
-    
-    # Calculs de simulation
-    if st.button("🚀 Lancer la Simulation", type="primary"):
-        with st.spinner("Calcul en cours..."):
-            # Simulation basique
-            if strategie == "🌍 Distribution homogène (pas de ciblage)":
-                taux_efficacite = efficacite / 100
-                urgences_evitees = doses_total * taux_efficacite * 0.02  # 2% des doses évitent 1 urgence
-                boost = 1.0
-            
-            elif strategie == "🔴 Ciblage départements à haut risque":
-                taux_efficacite = efficacite / 100
-                urgences_evitees = doses_total * taux_efficacite * 0.03  # 3% efficacité
-                boost = 1.5
-            
-            elif strategie == "🎯 Ciblage zones sous-vaccinées":
-                taux_efficacite = efficacite / 100
-                urgences_evitees = doses_total * taux_efficacite * 0.035  # 3.5% efficacité
-                boost = 1.75
-            
-            else:  # Ciblage optimisé
-                taux_efficacite = efficacite / 100
-                urgences_evitees = doses_total * taux_efficacite * 0.045  # 4.5% efficacité
-                boost = 2.0
-            
-            urgences_evitees *= boost
-            
-            # Calculs économiques
-            cout_campagne = doses_total * cout_dose
-            economie_realisee = urgences_evitees * cout_passage_urgence
-            benefice_net = economie_realisee - cout_campagne
-            roi = (benefice_net / cout_campagne * 100) if cout_campagne > 0 else 0
-            
-            # Affichage des résultats
-            st.success("✅ Simulation terminée !")
-            
-            st.markdown("### 📊 Résultats de la Simulation")
-            
-            # Métriques principales
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric(
-                    "🏥 Urgences évitées",
-                    f"{int(urgences_evitees):,}",
-                    help="Nombre estimé de passages aux urgences évités"
+     # === TAB 3 : PRÉDICTIONS GÉOGRAPHIQUES ===
+    with tab2:
+        st.markdown("### 🗺️ Prédictions par Département (2026)")
+
+        # Appliquer les filtres globaux aux prédictions
+        df_filtered_for_pred = df_master.copy()
+        if region_filter != 'Toutes':
+            df_filtered_for_pred = df_filtered_for_pred[df_filtered_for_pred['Région'] == region_filter]
+        if risque_filter:
+            df_filtered_for_pred = df_filtered_for_pred[df_filtered_for_pred['Catégorie_Risque'].isin(risque_filter)]
+
+        # Calculer tendances régionales UNIQUEMENT pour les régions filtrées
+        regions_to_analyze = df_filtered_for_pred['Région'].unique() if region_filter != 'Toutes' else data['regions']['Région'].unique()
+
+        for idx, region in enumerate(regions_to_analyze):
+            try:
+                # Préparation des données pour la région
+                df_reg = data['regions'][data['regions']['Région'] == region].copy()
+                df_reg = df_reg[df_reg['Date'].notna()].sort_values('Date')
+
+                # Vérification du nombre minimal de points
+                if len(df_reg) < 10:
+                    st.warning(f"⚠️ Pas assez de données pour {region} (n={len(df_reg)})")
+                    continue
+
+                # Préparation des variables
+                X = np.arange(len(df_reg)).reshape(-1, 1)
+                y = df_reg['Taux de passages aux urgences pour grippe'].values.reshape(-1, 1)
+                mask = ~np.isnan(y)
+                X_clean = X[mask.flatten()]
+                y_clean = y[mask]
+
+                if len(y_clean) < 10:
+                    st.warning(f"⚠️ Trop de valeurs manquantes pour {region}")
+                    continue
+
+                # Entraînement du modèle
+                model_reg = LinearRegression()
+                model_reg.fit(X_clean, y_clean)
+
+                # Création du graphique
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=df_reg['Date'].iloc[mask.flatten()],
+                    y=y_clean.flatten(),
+                    name='Données réelles',
+                    mode='lines+markers'
+                ))
+
+                # Prédiction pour 2026 (1 an = ~52 semaines)
+                future_X = np.arange(len(df_reg), len(df_reg)+52).reshape(-1, 1)
+                predictions = model_reg.predict(future_X)
+
+                fig.add_trace(go.Scatter(
+                    x=pd.date_range(
+                        start=df_reg['Date'].iloc[-1] + pd.Timedelta(weeks=1),
+                        periods=52,
+                        freq='W'
+                    ),
+                    y=predictions.flatten(),
+                    name='Prédiction 2026',
+                    mode='lines',
+                    line=dict(color='red', dash='dash')
+                ))
+
+                fig.update_layout(
+                    title=f"Prédiction 2026 pour {region}",
+                    xaxis_title="Date",
+                    yaxis_title="Taux pour 100k habitants",
+                    hovermode="x unified"
                 )
-            
-            with col2:
-                st.metric(
-                    "💰 Coût campagne",
-                    f"{int(cout_campagne):,} €"
+                region_clean = region.replace(' ', '_').replace("'", "")
+                st.plotly_chart(fig, key=f"pred_temp_serie_{region_clean}_{idx}", width="stretch")
+
+            except Exception as e:
+                st.error(f"❌ Erreur pour {region}: {str(e)}")
+                continue
+
+        # Top départements à surveiller (avec filtres appliqués)
+        st.markdown("### 🚨 Top 10 Départements - Hausse Prévue 2026")
+
+        # Créer df_pred_depts UNIQUEMENT avec les départements filtrés
+        df_pred_depts = df_filtered_for_pred.copy()
+
+        # Calculer les prédictions pour chaque département (simplifié)
+        # Note: Cette partie devrait être remplie avec votre logique métier réelle
+        df_pred_depts['Pred_Urgences_2026'] = df_pred_depts['Taux_Urgences_Moyen'] * 1.1  # Exemple simple
+        df_pred_depts['Delta_2026'] = df_pred_depts['Pred_Urgences_2026'] - df_pred_depts['Taux_Urgences_Moyen']
+
+        if len(df_pred_depts) > 0:
+            top_hausse = df_pred_depts.nlargest(10, 'Delta_2026')
+
+            fig2 = go.Figure(data=[
+                go.Bar(
+                    y=top_hausse['Département'],
+                    x=top_hausse['Delta_2026'],
+                    orientation='h',
+                    marker_color='#e74c3c',
+                    text=top_hausse['Delta_2026'].round(1),
+                    textposition='outside'
                 )
-            
-            with col3:
-                st.metric(
-                    "💵 Économies réalisées",
-                    f"{int(economie_realisee):,} €",
-                    delta=f"+{int(benefice_net):,} €"
-                )
-            
-            with col4:
-                roi_color = "normal" if roi > 0 else "inverse"
-                st.metric(
-                    "📈 ROI",
-                    f"{roi:.1f}%",
-                    delta="Bénéfice" if roi > 0 else "Perte",
-                    delta_color=roi_color
-                )
-            
-            # Graphique de comparaison
-            st.markdown("### 📊 Comparaison Coûts vs Économies")
-            
-            fig = go.Figure()
-            
-            fig.add_trace(go.Bar(
-                x=['Coût Campagne', 'Économies Réalisées'],
-                y=[cout_campagne, economie_realisee],
-                marker_color=['#ff7f0e', '#2ca02c'],
-                text=[f"{int(cout_campagne):,} €", f"{int(economie_realisee):,} €"],
-                textposition='auto'
-            ))
-            
-            fig.update_layout(
-                title="Impact Financier de la Campagne",
-                yaxis_title="Montant (€)",
-                showlegend=False,
-                height=400
+            ])
+
+            fig2.update_layout(
+                title="Augmentation Prévue du Taux Urgences (2026 vs Actuel)",
+                xaxis_title="Variation",
+                yaxis_title="",
+                height=500
             )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Interprétation
-            st.markdown("### 💡 Interprétation")
-            
-            if roi > 50:
-                st.success(f"""
-                ✅ **Excellent ROI ({roi:.1f}%) !**  
-                La campagne est très rentable. Pour chaque euro investi, 
-                vous économisez {(economie_realisee/cout_campagne):.2f} €.
-                """)
-            elif roi > 0:
-                st.info(f"""
-                📊 **ROI Positif ({roi:.1f}%)**  
-                La campagne est rentable mais peut être optimisée. 
-                Considérez un meilleur ciblage pour maximiser l'impact.
-                """)
-            else:
-                st.warning(f"""
-                ⚠️ **ROI Négatif ({roi:.1f}%)**  
-                Le coût de la campagne dépasse les économies réalisées. 
-                Recommandation : ajuster les paramètres ou cibler davantage.
-                """)
+            fig2.update_yaxes(autorange="reversed")
+
+            st.plotly_chart(fig, key="pred_geo_top10_hausse_autres", width="stretch")
+
+            st.dataframe(
+                top_hausse[['Département', 'Région', 'Taux_Urgences_Moyen',
+                           'Pred_Urgences_2026', 'Delta_2026']],
+                use_container_width=True
+            )
+        else:
+            st.warning("Aucun département ne correspond aux filtres appliqués")
+        
+        # Top départements à surveiller
+        df_pred_depts['Delta_2026'] = df_pred_depts['Pred_Urgences_2026'] - df_pred_depts['Taux_Urgences_Moyen']
+        top_hausse = df_pred_depts.nlargest(10, 'Delta_2026')
+        
+        st.markdown("### 🚨 Top 10 Départements - Hausse Prévue 2026")
+        
+        fig2 = go.Figure(data=[
+            go.Bar(
+                y=top_hausse['Département'],
+                x=top_hausse['Delta_2026'],
+                orientation='h',
+                marker_color='#e74c3c',
+                text=top_hausse['Delta_2026'].round(1),
+                textposition='outside'
+            )
+        ])
+        
+        fig2.update_layout(
+            title="Augmentation Prévue du Taux Urgences (2026 vs Actuel)",
+            xaxis_title="Variation",
+            yaxis_title="",
+            height=500
+        )
+        fig2.update_yaxes(autorange="reversed")
+        
+        st.plotly_chart(fig2, key="pred_geo_top10_hausse", width="stretch")
+        
+        st.dataframe(
+            top_hausse[['Département', 'Région', 'Taux_Urgences_Moyen', 
+                       'Pred_Urgences_2026', 'Delta_2026']],
+            use_container_width=True
+        )
+        
+        # Prédiction interactive
+        st.markdown("---")
+        st.markdown("### 🎯 Simulateur de Prédiction")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            couv_input = st.slider("Couverture 65+", 30.0, 80.0, 50.0, 0.1)
+            gap_input = st.slider("Gap Vaccinal", -20.0, 30.0, 5.0, 0.1)
+        
+        with col2:
+            urg_input = st.slider("Taux Urgences", 20.0, 200.0, 80.0, 1.0)
+            hosp_input = st.slider("Taux Hospit.", 5.0, 30.0, 15.0, 0.1)
+        
+        with col3:
+            score_input = st.slider("Score Impact", 100.0, 1000.0, 500.0, 10.0)
+        
+        # Prédire
+        X_new = np.array([[couv_input, gap_input, urg_input, hosp_input, score_input]])
+        prediction = model.predict(X_new)[0]
+        
+        st.success(f"""
+        ### 💉 Prédiction : **{prediction:,.0f} doses nécessaires**
+        
+        Pour un département avec ces caractéristiques, le modèle prédit 
+        qu'il faudra environ **{prediction:,.0f} doses** pour atteindre l'objectif de 75% de couverture.
+        """)
 
 # =============================================================================
-# PAGE RECOMMANDATIONS
+# PAGE 4 : SIMULATEUR
 # =============================================================================
-elif page == "💡 Recommandations":
-    st.header("💡 Recommandations Stratégiques")
+
+if pages[page] == "simulator":
+    st.markdown('<div class="main-header">🎯 Simulateur Enrichi</div>', unsafe_allow_html=True)
     
-    st.markdown("""
-    Sur la base des analyses réalisées, voici les **recommandations prioritaires** 
-    pour optimiser la stratégie vaccinale contre la grippe en France.
-    """)
+    st.markdown("### 🏥 Simulateur d'Impact des Actions de Vaccination")
     
-    # Recommandation 1
-    st.markdown("### 🎯 1. Ciblage Géographique Prioritaire")
+    # Sélection département
+    dept_selectionne = st.selectbox("📍 Département", df_master['Département'].unique())
+    dept_info = df_master[df_master['Département'] == dept_selectionne].iloc[0]
     
-    with st.expander("📍 Départements à Prioriser", expanded=True):
-        st.markdown("""
-        **Critères d'identification :**
-        - Taux de passages aux urgences élevé (> 80/100k)
-        - Couverture vaccinale faible (< 50% chez les 65+)
-        - Population à risque importante
+    # Baseline
+    st.markdown("---")
+    st.markdown("### 📊 État Actuel (Baseline)")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("💉 Couverture", f"{dept_info['Couverture_65plus']:.1f}%")
+    
+    with col2:
+        st.metric("🏥 Taux Urgences", f"{dept_info['Taux_Urgences_Moyen']:.1f}")
+    
+    with col3:
+        st.metric("📊 Gap Vaccinal", f"{dept_info['Gap_Vaccinal']:.1f} pts")
+    
+    with col4:
+        badge_class = {
+            'Critique': 'badge-critique',
+            'Élevé': 'badge-eleve',
+            'Moyen': 'badge-moyen',
+            'Faible': 'badge-faible'
+        }.get(dept_info['Catégorie_Risque'], 'badge-moyen')
         
-        **Actions recommandées :**
-        - 📦 Augmenter les stocks de vaccins de **20-30%**
-        - 🚐 Déployer des unités mobiles de vaccination
-        - 📣 Renforcer les campagnes de communication locale
-        - 🏥 Partenariats avec médecins généralistes et pharmacies
-        """)
+        st.markdown(f"""
+        <div style='text-align: center; padding: 1rem 0;'>
+            <span class='{badge_class}'>{dept_info['Catégorie_Risque']}</span>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Recommandation 2
-    st.markdown("### 📅 2. Optimisation du Calendrier Vaccinal")
+    st.markdown("---")
     
-    with st.expander("⏰ Timing Optimal", expanded=False):
-        st.markdown("""
-        **Pic épidémique :** Décembre - Février  
-        **Période optimale de vaccination :** Octobre - Novembre
+    # Configuration actions
+    st.markdown("### ⚙️ Configuration des Actions")
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["💉 Doses Vaccins", "🏪 Pharmacies", 
+                                       "🚑 SOS Médecins", "📣 Communication"])
+    
+    actions = {}
+    
+    with tab1:
+        col1, col2 = st.columns(2)
+        with col1:
+            nb_doses = st.number_input("Nombre de doses", 0, 100000, 10000, 1000)
+            tranche_age = st.selectbox("Tranche d'âge", ['65-74 ans', '75+ ans', 'Tous 65+'])
+    with col2:
+        # Plage étendue : semaine 1 à 52 (toute l'année)
+        semaine = st.slider("Semaine implémentation", 1, 52, 40)
+
+        # Efficacité selon période
+        # Pic épidémique : semaines 48-10 (novembre-mars) → 80%
+        # Pré-pic : semaines 36-47 (septembre-novembre) → 70%
+        # Hors saison : reste de l'année → 50%
+        if (semaine >= 48 or semaine <= 10):
+            efficacite = 0.80
+            periode = "Pic épidémique"
+        elif 36 <= semaine <= 47:
+            efficacite = 0.70
+            periode = "Pré-pic (optimal)"
+        else:
+            efficacite = 0.50
+            periode = "Hors saison"
+
+        st.info(f"**Efficacité : {efficacite*100:.0f}%**\n\n{periode}")
+
+        actions['doses'] = {'actif': nb_doses > 0, 'valeur': nb_doses,
+                           'efficacite': efficacite, 'cout': nb_doses * 12}
+    
+    with tab2:
+        nb_pharmacies = st.number_input("Nombre de pharmacies", 0, 20, 3, 1)
+        impact_pharmacie = 0.09 * nb_pharmacies
+        st.metric("Impact sur couverture", f"+{impact_pharmacie:.1f}%")
+        actions['pharmacies'] = {'actif': nb_pharmacies > 0, 'valeur': nb_pharmacies,
+                                'impact': impact_pharmacie, 'cout': nb_pharmacies * 2500}
+    
+    with tab3:
+        nb_sos = st.number_input("Nombre d'équipes SOS", 0, 10, 2, 1)
+        impact_sos = 0.06 * nb_sos
+        st.metric("Impact sur couverture", f"+{impact_sos:.1f}%")
+        actions['sos'] = {'actif': nb_sos > 0, 'valeur': nb_sos,
+                         'impact': impact_sos, 'cout': nb_sos * 80000}
+    
+    with tab4:
+        budget_comm = st.number_input("Budget (milliers €)", 0, 500, 50, 10)
+        impact_comm = 0.04 * (budget_comm / 100)
+        st.metric("Impact sur couverture", f"+{impact_comm:.1f}%")
+        actions['comm'] = {'actif': budget_comm > 0, 'valeur': budget_comm,
+                          'impact': impact_comm, 'cout': budget_comm * 1000}
+    
+    st.markdown("---")
+    
+    # Lancer simulation
+    if st.button("🚀 LANCER LA SIMULATION", type="primary", use_container_width=True):
         
-        **Actions recommandées :**
-        - 🗓️ Débuter les campagnes **mi-septembre**
-        - 🎯 Objectif : 75% de couverture avant décembre
-        - 📊 Suivi hebdomadaire des couvertures régionales
-        - 🚨 Alertes précoces en cas de retard
-        """)
-    
-    # Recommandation 3
-    st.markdown("### 👥 3. Ciblage des Populations Vulnérables")
-    
-    with st.expander("🎯 Groupes Prioritaires", expanded=False):
-        st.markdown("""
-        **Priorité 1 : 65 ans et plus**
-        - Objectif : 75% de couverture (actuellement ~50%)
-        - Méthode : Rappels automatisés, gratuité, facilité d'accès
+        with st.spinner("⏳ Calcul en cours..."):
+            # Calcul impact cumulé
+            delta_couverture = 0
+            
+            # Doses
+            if actions['doses']['actif']:
+                pop_estimee = dept_info['Population_65plus_Estimee']
+                delta_couverture += (actions['doses']['valeur'] / pop_estimee) * 100 * actions['doses']['efficacite']
+            
+            # Pharmacies
+            if actions['pharmacies']['actif']:
+                delta_couverture += actions['pharmacies']['impact']
+            
+            # SOS
+            if actions['sos']['actif']:
+                delta_couverture += actions['sos']['impact']
+            
+            # Communication
+            if actions['comm']['actif']:
+                delta_couverture += actions['comm']['impact']
+            
+            # Cap à +15 pts
+            delta_couverture = min(delta_couverture, 15)
+            
+            # Impact urgences (coefficient calibré)
+            coef_urgences = -0.65
+            delta_urgences = delta_couverture * coef_urgences
+            
+            # Impact hospitalisations
+            delta_hospit = delta_urgences * (dept_info['Taux_Hospit_Moyen'] / 100)
+            
+            # Simulation
+            simulation = {
+                'couverture': dept_info['Couverture_65plus'] + delta_couverture,
+                'urgences': dept_info['Taux_Urgences_Moyen'] + delta_urgences,
+                'hospitalisations': dept_info['Taux_Hospit_Moyen'] + delta_hospit
+            }
+            
+            # Bénéfices
+            cout_passage = 190
+            cout_hospit = 3800
+            
+            urgences_evitees = abs(delta_urgences) * 52  # Par an
+            hospit_evitees = abs(delta_hospit) * 52
+            
+            benefice_urgences = urgences_evitees * cout_passage
+            benefice_hospit = hospit_evitees * cout_hospit
+            benefice_total = benefice_urgences + benefice_hospit
+            
+            # Coûts
+            cout_total = sum(a['cout'] for a in actions.values() if a['actif'])
+            
+            # ROI
+            roi = ((benefice_total - cout_total) / cout_total * 100) if cout_total > 0 else 0
         
-        **Priorité 2 : Personnes à risque < 65 ans**
-        - Objectif : 50% de couverture (actuellement ~30%)
-        - Méthode : Sensibilisation des médecins, bons de vaccination
+        st.success("✅ Simulation terminée !")
         
-        **Priorité 3 : Personnel soignant**
-        - Objectif : 80% de couverture
-        - Méthode : Vaccination obligatoire ou fortement incitée
-        """)
-    
-    # Recommandation 4
-    st.markdown("### 🤖 4. Utilisation de l'IA et du Machine Learning")
-    
-    with st.expander("🧠 Modèles Prédictifs", expanded=False):
-        st.markdown("""
-        **Déploiement recommandé :**
-        - 📈 **Modèle de prédiction des besoins** : SARIMA/Prophet
-          - Anticiper les besoins 2-3 mois à l'avance
-          - Précision cible : ±10%
+        # Résultats
+        st.markdown("---")
+        st.markdown("### 📊 Résultats de la Simulation")
         
-        - 🗺️ **Scoring géographique** : Random Forest/XGBoost
-          - Identifier les zones à risque
-          - Actualisation mensuelle
+        col1, col2, col3, col4 = st.columns(4)
         
-        - 🎯 **Optimisation de la distribution** : Algorithmes d'optimisation
-          - Minimiser les ruptures de stock
-          - Maximiser la couverture avec budget contraint
-        """)
+        with col1:
+            st.metric("💉 Couverture 65+", f"{simulation['couverture']:.1f}%", 
+                     f"+{delta_couverture:.1f} pts")
+        
+        with col2:
+            st.metric("🏥 Taux Urgences", f"{simulation['urgences']:.1f}", 
+                     f"{delta_urgences:+.1f}")
+        
+        with col3:
+            st.metric("🚑 Urgences Évitées/an", f"{urgences_evitees:.0f}")
+        
+        with col4:
+            roi_color = "normal" if roi > 0 else "inverse"
+            st.metric("💰 ROI", f"{roi:+.0f}%", delta_color=roi_color)
+        
+        # Graphique comparaison
+        st.markdown("### 📈 Comparaison Avant / Après")
+        
+        categories = ['Couverture 65+', 'Taux Urgences']
+        avant = [dept_info['Couverture_65plus'], dept_info['Taux_Urgences_Moyen']]
+        apres = [simulation['couverture'], simulation['urgences']]
+        
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name='Avant', x=categories, y=avant, 
+                            marker_color='#ff7f0e', text=avant, textposition='auto'))
+        fig.add_trace(go.Bar(name='Après', x=categories, y=apres, 
+                            marker_color='#2ca02c', text=[round(v,1) for v in apres], 
+                            textposition='auto'))
+        
+        fig.update_layout(barmode='group', height=400, title="Impact de la Simulation")
+        st.plotly_chart(fig, key="sim_avant_apres", width="stretch")
+        
+        # Analyse financière
+        st.markdown("### 💰 Analyse Financière")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 💸 Coûts")
+            couts_data = []
+            if actions['doses']['actif']:
+                couts_data.append(('Doses vaccins', actions['doses']['cout']))
+            if actions['pharmacies']['actif']:
+                couts_data.append(('Pharmacies', actions['pharmacies']['cout']))
+            if actions['sos']['actif']:
+                couts_data.append(('SOS Médecins', actions['sos']['cout']))
+            if actions['comm']['actif']:
+                couts_data.append(('Communication', actions['comm']['cout']))
+            
+            if couts_data:
+                df_couts = pd.DataFrame(couts_data, columns=['Poste', 'Montant'])
+                fig = px.pie(df_couts, values='Montant', names='Poste', 
+                            title="Répartition des Coûts", hole=0.3)
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, key="sim_couts_camembert", width="stretch")
+            
+            st.metric("💵 Coût Total", f"{cout_total:,.0f} €")
+        
+        with col2:
+            st.markdown("#### 💎 Bénéfices")
+            benefices_data = [
+                ('Économies Urgences', benefice_urgences),
+                ('Économies Hospitalisations', benefice_hospit)
+            ]
+            df_benefices = pd.DataFrame(benefices_data, columns=['Poste', 'Montant'])
+            fig = px.pie(df_benefices, values='Montant', names='Poste',
+                        title="Répartition des Bénéfices", hole=0.3)
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, key="sim_benefices_camembert", width="stretch")
+            
+            st.metric("💚 Bénéfice Total", f"{benefice_total:,.0f} €")
+        
+        # Interprétation
+        st.markdown("---")
+        st.markdown("### 💡 Interprétation")
+        
+        if roi > 200:
+            st.success(f"""
+            🎉 **EXCELLENT ROI ({roi:.0f}%) !**
+            
+            Cette stratégie est très rentable. Pour chaque euro investi, 
+            vous économisez **{benefice_total/cout_total:.2f} €**.
+            
+            ✅ Déployer immédiatement
+            """)
+        elif roi > 50:
+            st.info(f"""
+            👍 **BON ROI ({roi:.0f}%)**
+            
+            La stratégie est rentable.
+            
+            💡 Peut être optimisée pour encore plus d'impact
+            """)
+        elif roi > 0:
+            st.warning(f"""
+            ⚠️ **ROI FAIBLE ({roi:.0f}%)**
+            
+            Rentable mais nécessite optimisation.
+            
+            🔧 Ajuster les paramètres ou cibler mieux
+            """)
+        else:
+            st.error(f"""
+            ❌ **ROI NÉGATIF ({roi:.0f}%)**
+            
+            Coût > Bénéfices
+            
+            🛑 NE PAS déployer en l'état
+            """)
+
+# =============================================================================
+# PAGE 5 : EXPORT
+# =============================================================================
+
+if pages[page] == "export":
+    st.markdown('<div class="main-header">📥 Export & Rapports</div>', unsafe_allow_html=True)
     
-    # Recommandation 5
-    st.markdown("### 💰 5. Optimisation Budgétaire")
+    st.markdown("### 📊 Télécharger les Données")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.info("""
-        **💵 Investissements Prioritaires**
-        - 📦 Logistique et distribution : 30%
-        - 📣 Communication et sensibilisation : 25%
-        - 💉 Doses de vaccin : 35%
-        - 🤖 Outils numériques et IA : 10%
-        """)
+        csv_master = df_master.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 Télécharger Dataset Maître (CSV)",
+            data=csv_master,
+            file_name=f"master_dataset_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )
     
     with col2:
-        st.success("""
-        **📊 ROI Attendu**
-        - Réduction passages urgences : **-20%**
-        - Économies Sécurité Sociale : **+150M€**
-        - ROI global : **+200%**
-        - Vies sauvées : **~2000/an**
-        """)
+        df_critiques = df_master[df_master['Catégorie_Risque'] == 'Critique']
+        csv_critiques = df_critiques.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="🚨 Télécharger Départements Critiques (CSV)",
+            data=csv_critiques,
+            file_name=f"departements_critiques_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )
     
-    # Recommandation 6
-    st.markdown("### 📱 6. Digitalisation et Innovation")
-    
-    with st.expander("🚀 Outils Digitaux", expanded=False):
-        st.markdown("""
-        **Applications mobiles :**
-        - 📲 Rappels personnalisés de vaccination
-        - 🗺️ Géolocalisation des centres de vaccination
-        - 📊 Suivi personnel de la couverture vaccinale
-        
-        **Portail web décideurs :**
-        - 📈 Dashboard temps réel des couvertures
-        - 🚨 Alertes automatiques (stocks, épidémies)
-        - 📊 Tableaux de bord prédictifs
-        - 📥 Export de rapports personnalisables
-        """)
-    
-    # Plan d'action synthétique
     st.markdown("---")
-    st.markdown("### 📋 Plan d'Action Synthétique (12 mois)")
+    st.markdown("### 📊 Statistiques d'Export")
     
-    timeline_data = {
-        'Phase': ['Phase 1', 'Phase 2', 'Phase 3', 'Phase 4'],
-        'Période': ['Mois 1-3', 'Mois 4-6', 'Mois 7-9', 'Mois 10-12'],
-        'Actions': [
-            '🔧 Audit des données, identification zones prioritaires, formation équipes',
-            '🚀 Lancement campagnes ciblées, déploiement IA, outils digitaux',
-            '📊 Monitoring temps réel, ajustements, renforcement zones critiques',
-            '📈 Évaluation impact, capitalisation learnings, planification année N+1'
-        ]
-    }
+    col1, col2, col3, col4 = st.columns(4)
     
-    df_timeline = pd.DataFrame(timeline_data)
+    with col1:
+        st.metric("📂 Lignes Dataset", len(df_master))
     
-    st.table(df_timeline)
+    with col2:
+        st.metric("🚨 Départements Critiques", len(df_critiques))
     
-    st.success("""
-    🎯 **Objectif Final**  
-    Augmenter la couverture vaccinale de **10 points de pourcentage** en 2 ans  
-    et réduire les passages aux urgences de **20%** durant la saison grippale.
-    """)
+    with col3:
+        st.metric("📊 Colonnes", len(df_master.columns))
+    
+    with col4:
+        taille_mo = len(csv_master) / 1024 / 1024
+        st.metric("💾 Taille", f"{taille_mo:.2f} MB")
 
 # =============================================================================
 # FOOTER
 # =============================================================================
+
 st.markdown("---")
 st.markdown("""
-<div style="text-align: center; color: #666; padding: 2rem 0;">
-    <p>📊 <strong>Hackathon Stratégie Vaccinale Grippe</strong></p>
-    <p>Données : Santé Publique France | Dashboard : Streamlit + Plotly</p>
-    <p><em>Optimiser la vaccination, sauver des vies 💙</em></p>
+<div style="text-align: center; color: #666; padding: 1.5rem 0;">
+    <p style="font-size: 1.1rem; font-weight: bold;">🦠 Hackathon Stratégie Vaccinale Grippe 💉</p>
+    <p>Dashboard Complet - 5 Pages Fonctionnelles</p>
+    <p style="font-size: 0.9rem; color: #999;">
+        Données : Santé Publique France | Année : {df_master['Année_Référence'].iloc[0] if len(df_master) > 0 else 'N/A'}
+    </p>
 </div>
 """, unsafe_allow_html=True)

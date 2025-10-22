@@ -208,81 +208,177 @@ print("\n🗺️ Création de la carte de France...")
 
 import plotly.graph_objects as go
 import json
+import urllib.request
 
-# Charger le GeoJSON des départements français
-# URL du GeoJSON officiel
+# Fonction pour normaliser les codes départements
+def normaliser_code_dept(code):
+    """Convertit les codes en format à 2 chiffres (01, 02, etc.)"""
+    if pd.isna(code):
+        return None
+    code_str = str(code).strip()
+    
+    # Si c'est déjà un nombre, le formater
+    if code_str.isdigit():
+        return code_str.zfill(2)  # Ajoute un 0 devant si nécessaire
+    
+    # Si format "(XX)", extraire le code
+    if '(' in code_str and ')' in code_str:
+        extracted = code_str.split('(')[1].split(')')[0].strip()
+        if extracted.isdigit():
+            return extracted.zfill(2)
+    
+    # Départements spéciaux (Corse, DOM-TOM)
+    special_codes = {
+        '2A': '2A', '2B': '2B',  # Corse
+        '971': '971', '972': '972', '973': '973', '974': '974', '976': '976'  # DOM
+    }
+    if code_str in special_codes:
+        return special_codes[code_str]
+    
+    return None
+
+# CHARGEMENT DES DONNÉES
+print("📊 Chargement des données...")
+
+# Supposons que df_fusion existe déjà, sinon le recréer :
+# df_fusion = pd.read_csv('votre_fichier_fusion.csv')
+
+# EXEMPLE avec vos données de grippe et vaccination
+df_dept = pd.read_csv('data/grippe-passages-aux-urgences-et-actes-sos-medecins-departement.csv')
+df_vacc = pd.read_csv('data/couvertures-vaccinales-des-adolescent-et-adultes-departement.csv')
+
+# Préparer les données pour la carte
+print("🔧 Normalisation des codes départements...")
+
+# Nettoyer et normaliser les codes
+df_dept['Code_Dept_Clean'] = df_dept['Département Code'].apply(normaliser_code_dept)
+df_vacc['Code_Dept_Clean'] = df_vacc['Département Code'].apply(normaliser_code_dept)
+
+# Calculer un score d'impact simplifié (moyenne par département)
+# Note: Adapter selon votre logique de calcul
+df_urgences_agg = df_dept.groupby('Code_Dept_Clean').agg({
+    'Taux de passages aux urgences pour grippe': 'mean',
+    'Département': 'first'
+}).reset_index()
+
+df_vacc_recent = df_vacc[df_vacc['Année'] == df_vacc['Année'].max()]
+df_vacc_agg = df_vacc_recent.groupby('Code_Dept_Clean').agg({
+    'Grippe 65 ans et plus': 'mean'
+}).reset_index()
+
+# Fusionner
+df_map = df_urgences_agg.merge(df_vacc_agg, on='Code_Dept_Clean', how='left')
+
+# Calculer le score d'impact (formule simplifiée)
+# Score élevé = Urgences élevées + Couverture faible
+df_map['Couverture_65plus'] = df_map['Grippe 65 ans et plus'].fillna(df_map['Grippe 65 ans et plus'].median())
+df_map['Urgences'] = df_map['Taux de passages aux urgences pour grippe'].fillna(0)
+
+# Normaliser entre 0 et 100
+urgences_norm = (df_map['Urgences'] - df_map['Urgences'].min()) / (df_map['Urgences'].max() - df_map['Urgences'].min()) * 100
+couv_norm = 100 - df_map['Couverture_65plus']  # Inverser : faible couverture = score élevé
+
+df_map['Score_Impact'] = (urgences_norm * 0.6 + couv_norm * 0.4)
+
+print(f"✓ {len(df_map)} départements préparés")
+print(f"  Codes disponibles: {df_map['Code_Dept_Clean'].nunique()}")
+print(f"  Exemple codes: {df_map['Code_Dept_Clean'].head(10).tolist()}")
+
+# CHARGEMENT DU GEOJSON
+print("\n🗺️ Chargement du GeoJSON...")
 geojson_url = "https://france-geojson.gregoiredavid.fr/repo/departements.geojson"
 
 try:
-    import urllib.request
     with urllib.request.urlopen(geojson_url) as url:
         departements_geojson = json.loads(url.read().decode())
     
-    # Préparer les données pour la carte
-    df_map = df_fusion.copy()
-    df_map['code_dept'] = df_map['Département'].str.extract(r'\((\d+)\)$')[0]
+    # Vérifier les codes dans le GeoJSON
+    geojson_codes = [feat['properties']['code'] for feat in departements_geojson['features']]
+    print(f"✓ GeoJSON chargé avec {len(geojson_codes)} départements")
+    print(f"  Exemple codes GeoJSON: {geojson_codes[:10]}")
     
-    # Créer la carte choroplèthe
+    # DIAGNOSTIC : Codes manquants
+    codes_data = set(df_map['Code_Dept_Clean'].dropna())
+    codes_geojson = set(geojson_codes)
+    
+    manquants_data = codes_geojson - codes_data
+    manquants_geojson = codes_data - codes_geojson
+    
+    if manquants_geojson:
+        print(f"⚠️ Codes dans vos données absents du GeoJSON: {manquants_geojson}")
+    if manquants_data:
+        print(f"⚠️ Codes GeoJSON sans données: {manquants_data}")
+    
+    print(f"✓ Match: {len(codes_data & codes_geojson)} départements avec données ET géométrie")
+    
+    # CRÉATION DE LA CARTE
+    print("\n🎨 Création de la carte interactive...")
+    
     fig = go.Figure(go.Choroplethmapbox(
         geojson=departements_geojson,
-        locations=df_map['code_dept'],
+        locations=df_map['Code_Dept_Clean'],
         z=df_map['Score_Impact'],
-        featureidkey="properties.code",
+        featureidkey="properties.code",  # CLÉ CRITIQUE : doit correspondre aux codes normalisés
         colorscale=[
-            [0, 'green'],
-            [0.33, 'yellow'],
-            [0.66, 'orange'],
-            [1, 'darkred']
+            [0, '#2ecc71'],      # Vert : faible priorité
+            [0.33, '#f1c40f'],   # Jaune
+            [0.66, '#e67e22'],   # Orange
+            [1, '#c0392b']       # Rouge foncé : haute priorité
         ],
-        marker_opacity=0.7,
-        marker_line_width=0.5,
+        marker_opacity=0.75,
+        marker_line_width=1,
         marker_line_color='white',
         colorbar=dict(
-            title="Score<br>Impact",
-            thickness=15,
-            len=0.7
+            title="Score<br>Impact<br>(0-100)",
+            thickness=20,
+            len=0.7,
+            x=1.02
         ),
         text=df_map['Département'],
-        hovertemplate='<b>%{text}</b><br>' +
-                      'Score Impact: %{z:.1f}<br>' +
-                      '<extra></extra>'
+        customdata=df_map[['Urgences', 'Couverture_65plus']],
+        hovertemplate=(
+            '<b>%{text}</b><br>' +
+            'Score Impact: %{z:.1f}/100<br>' +
+            'Taux urgences: %{customdata[0]:.2f}<br>' +
+            'Couverture 65+: %{customdata[1]:.1f}%<br>' +
+            '<extra></extra>'
+        )
     ))
     
     fig.update_layout(
         mapbox_style="carto-positron",
-        mapbox_zoom=4.5,
-        mapbox_center={"lat": 46.5, "lon": 2.5},
+        mapbox_zoom=4.8,
+        mapbox_center={"lat": 46.8, "lon": 2.5},
         title={
-            'text': '🗺️ CARTE DE FRANCE - Score d\'Impact Vaccination par Département',
+            'text': '🗺️ SCORE D\'IMPACT VACCINATION GRIPPE PAR DÉPARTEMENT<br>' +
+                    '<sub>Plus le score est élevé, plus la priorité d\'action est forte</sub>',
             'x': 0.5,
             'xanchor': 'center',
-            'font': {'size': 16, 'family': 'Arial Black'}
+            'font': {'size': 18, 'family': 'Arial Black', 'color': '#2c3e50'}
         },
-        height=800,
-        margin={"r":0,"t":50,"l":0,"b":0}
+        height=900,
+        width=1400,
+        margin={"r":50,"t":100,"l":0,"b":0},
+        font=dict(family="Arial", size=12)
     )
     
-    fig.write_html('output/12_carte_france_impact.html')
-    print("   ✓ 12_carte_france_impact.html (carte interactive)")
+    # Sauvegarder
+    fig.write_html('output/carte_france_vaccination_corrigee.html')
+    print("✅ CARTE CRÉÉE : carte_france_vaccination_corrigee.html")
     
-    # Version PNG statique avec matplotlib + geopandas (alternative)
-    print("   → Création version PNG...")
+    # Afficher les top départements prioritaires
+    print("\n📊 TOP 10 DÉPARTEMENTS PRIORITAIRES :")
+    top_10 = df_map.nlargest(10, 'Score_Impact')[['Département', 'Score_Impact', 'Urgences', 'Couverture_65plus']]
+    print(top_10.to_string(index=False))
     
 except Exception as e:
-    print(f"   ⚠️ Erreur carte Plotly : {e}")
-    print("   → Création version simplifiée avec Matplotlib...")
+    print(f"❌ ERREUR : {e}")
+    import traceback
+    traceback.print_exc()
 
-# VERSION ALTERNATIVE : Carte simplifiée avec Matplotlib
-fig, ax = plt.subplots(figsize=(16, 12))
-
-# Grouper par région pour simplifier
-df_region = df_fusion.groupby('Région').agg({
-    'Score_Impact': 'mean',
-    'Taux_Urgences_Moyen': 'mean',
-    'Couverture_65plus': 'mean'
-}).reset_index()
-
-df_region = df_region.sort_values('Score_Impact', ascending=False)
+print("\n" + "="*80)
+print("POINTS DE VIGILANCE :")
+print("="*80)
 
 # Carte en barres horizontales par région
 colors_region = plt.cm.RdYlGn_r(np.linspace(0.2, 0.9, len(df_region)))

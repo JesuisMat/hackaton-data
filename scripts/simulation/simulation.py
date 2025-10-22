@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
+
 # =============================================================================
 # CLASSES DE DONNÉES
 # =============================================================================

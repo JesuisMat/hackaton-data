@@ -657,248 +657,386 @@ elif pages[page] == "map":
             st.plotly_chart(fig, key="carte_fallback_bottom10", width="stretch")
 
 # =============================================================================
-# PAGE 3 : PRÉDICTIONS ML
+# PAGE 3 : PRÉDICTIONS PROPHET
 # =============================================================================
 
 if pages[page] == "predictions":
-    st.markdown('<div class="main-header">📈 Prédictions Machine Learning</div>', unsafe_allow_html=True)
-
-    # === 1. Création des onglets ===
-    tab1, tab2 = st.tabs([
-        "📈 Prédictions Temporelles",
-        "🗺️ Prédictions Géographiques"
-    ])
-
-    # === 2. Contenu de l'onglet 1 : Prédictions Temporelles ===
-    with tab1:
-        st.markdown("### 📈 Prédictions Temporelles")
-
-        # Sélection simplifiée
-        niveau = st.selectbox("Niveau géographique", ["National"], key="niveau_temp")
-        indicateur = st.selectbox(
-            "Indicateur",
-            ['Taux de passages aux urgences pour grippe'],
-            key="indicateur_temp"
-        )
-
-        # Préparation des données
-        df = data['france'].copy()
-        df = df.dropna(subset=['Date', indicateur])
-        df['Année'] = df['Date'].dt.year
-        df_agg = df.groupby('Année')[indicateur].mean().reset_index()
-
-        # Vérification des données
-        if len(df_agg) < 2:
-            st.warning("Données insuffisantes - Utilisation de données d'exemple")
-            df_agg = pd.DataFrame({
-                'Année': [2020, 2021, 2022, 2023],
-                indicateur: [50, 60, 55, 65]
-            })
-
-        # Entraînement du modèle (LinearRegression)
-        X = df_agg['Année'].values.reshape(-1, 1)
-        y = df_agg[indicateur].values
-
-        if st.session_state.model_temp is None:
-            st.session_state.model_temp = LinearRegression()
-            st.session_state.model_temp.fit(X, y)
-
-        # Prédictions
-        annees_futures = np.array([2024, 2025, 2026, 2027, 2028]).reshape(-1, 1)
-        predictions = st.session_state.model_temp.predict(annees_futures)
-
-        # Visualisation
-        fig = px.line(df_agg, x='Année', y=indicateur, title="Données historiques et prédictions")
-        fig.add_scatter(
-            x=annees_futures.flatten(),
-            y=predictions,
-            mode='lines+markers',
-            name='Prédiction',
-            line=dict(color='red', dash='dash')
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
+    st.markdown('<div class="main-header">📈 Prédictions avec Prophet</div>', unsafe_allow_html=True)
     
-     # === TAB 3 : PRÉDICTIONS GÉOGRAPHIQUES ===
-    with tab2:
-        st.markdown("### 🗺️ Prédictions par Département (2026)")
-
-        # Appliquer les filtres globaux aux prédictions
-        df_filtered_for_pred = df_master.copy()
-        if region_filter != 'Toutes':
-            df_filtered_for_pred = df_filtered_for_pred[df_filtered_for_pred['Région'] == region_filter]
-        if risque_filter:
-            df_filtered_for_pred = df_filtered_for_pred[df_filtered_for_pred['Catégorie_Risque'].isin(risque_filter)]
-
-        # Calculer tendances régionales UNIQUEMENT pour les régions filtrées
-        regions_to_analyze = df_filtered_for_pred['Région'].unique() if region_filter != 'Toutes' else data['regions']['Région'].unique()
-
-        for idx, region in enumerate(regions_to_analyze):
-            try:
-                # Préparation des données pour la région
-                df_reg = data['regions'][data['regions']['Région'] == region].copy()
-                df_reg = df_reg[df_reg['Date'].notna()].sort_values('Date')
-
-                # Vérification du nombre minimal de points
-                if len(df_reg) < 10:
-                    st.warning(f"⚠️ Pas assez de données pour {region} (n={len(df_reg)})")
-                    continue
-
-                # Préparation des variables
-                X = np.arange(len(df_reg)).reshape(-1, 1)
-                y = df_reg['Taux de passages aux urgences pour grippe'].values.reshape(-1, 1)
-                mask = ~np.isnan(y)
-                X_clean = X[mask.flatten()]
-                y_clean = y[mask]
-
-                if len(y_clean) < 10:
-                    st.warning(f"⚠️ Trop de valeurs manquantes pour {region}")
-                    continue
-
-                # Entraînement du modèle
-                model_reg = LinearRegression()
-                model_reg.fit(X_clean, y_clean)
-
-                # Création du graphique
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=df_reg['Date'].iloc[mask.flatten()],
-                    y=y_clean.flatten(),
-                    name='Données réelles',
-                    mode='lines+markers'
-                ))
-
-                # Prédiction pour 2026 (1 an = ~52 semaines)
-                future_X = np.arange(len(df_reg), len(df_reg)+52).reshape(-1, 1)
-                predictions = model_reg.predict(future_X)
-
-                fig.add_trace(go.Scatter(
-                    x=pd.date_range(
-                        start=df_reg['Date'].iloc[-1] + pd.Timedelta(weeks=1),
-                        periods=52,
-                        freq='W'
-                    ),
-                    y=predictions.flatten(),
-                    name='Prédiction 2026',
-                    mode='lines',
-                    line=dict(color='red', dash='dash')
-                ))
-
-                fig.update_layout(
-                    title=f"Prédiction 2026 pour {region}",
-                    xaxis_title="Date",
-                    yaxis_title="Taux pour 100k habitants",
-                    hovermode="x unified"
-                )
-                region_clean = region.replace(' ', '_').replace("'", "")
-                st.plotly_chart(fig, key=f"pred_temp_serie_{region_clean}_{idx}", width="stretch")
-
-            except Exception as e:
-                st.error(f"❌ Erreur pour {region}: {str(e)}")
-                continue
-
-        # Top départements à surveiller (avec filtres appliqués)
-        st.markdown("### 🚨 Top 10 Départements - Hausse Prévue 2026")
-
-        # Créer df_pred_depts UNIQUEMENT avec les départements filtrés
-        df_pred_depts = df_filtered_for_pred.copy()
-
-        # Calculer les prédictions pour chaque département (simplifié)
-        # Note: Cette partie devrait être remplie avec votre logique métier réelle
-        df_pred_depts['Pred_Urgences_2026'] = df_pred_depts['Taux_Urgences_Moyen'] * 1.1  # Exemple simple
-        df_pred_depts['Delta_2026'] = df_pred_depts['Pred_Urgences_2026'] - df_pred_depts['Taux_Urgences_Moyen']
-
-        if len(df_pred_depts) > 0:
-            top_hausse = df_pred_depts.nlargest(10, 'Delta_2026')
-
-            fig2 = go.Figure(data=[
-                go.Bar(
-                    y=top_hausse['Département'],
-                    x=top_hausse['Delta_2026'],
-                    orientation='h',
-                    marker_color='#e74c3c',
-                    text=top_hausse['Delta_2026'].round(1),
-                    textposition='outside'
-                )
-            ])
-
-            fig2.update_layout(
-                title="Augmentation Prévue du Taux Urgences (2026 vs Actuel)",
-                xaxis_title="Variation",
-                yaxis_title="",
-                height=500
-            )
-            fig2.update_yaxes(autorange="reversed")
-
-            st.plotly_chart(fig, key="pred_geo_top10_hausse_autres", width="stretch")
-
-            st.dataframe(
-                top_hausse[['Département', 'Région', 'Taux_Urgences_Moyen',
-                           'Pred_Urgences_2026', 'Delta_2026']],
-                use_container_width=True
-            )
-        else:
-            st.warning("Aucun département ne correspond aux filtres appliqués")
+    # === VÉRIFICATION MODÈLES PROPHET ===
+    @st.cache_resource
+    def load_prophet_models():
+        """Charge les modèles Prophet pré-entraînés"""
+        from pathlib import Path
+        import joblib
         
-        # Top départements à surveiller
-        df_pred_depts['Delta_2026'] = df_pred_depts['Pred_Urgences_2026'] - df_pred_depts['Taux_Urgences_Moyen']
-        top_hausse = df_pred_depts.nlargest(10, 'Delta_2026')
+        models_dir = Path("models/prophet")
         
-        st.markdown("### 🚨 Top 10 Départements - Hausse Prévue 2026")
+        if not models_dir.exists():
+            return None, None, None
         
-        fig2 = go.Figure(data=[
-            go.Bar(
-                y=top_hausse['Département'],
-                x=top_hausse['Delta_2026'],
-                orientation='h',
-                marker_color='#e74c3c',
-                text=top_hausse['Delta_2026'].round(1),
-                textposition='outside'
-            )
-        ])
+        try:
+            model_nat = joblib.load(models_dir / "model_national.pkl")
+            data_nat = joblib.load(models_dir / "data_national.pkl")
+            metadata = joblib.load(models_dir / "metadata.pkl")
+            
+            # Charge départements disponibles
+            models_dept = {}
+            for dept in metadata.get('departements', []):
+                dept_safe = dept.replace(' ', '_').replace('-', '_')
+                model_path = models_dir / f"model_{dept_safe}.pkl"
+                if model_path.exists():
+                    models_dept[dept] = joblib.load(model_path)
+            
+            return model_nat, data_nat, models_dept
         
-        fig2.update_layout(
-            title="Augmentation Prévue du Taux Urgences (2026 vs Actuel)",
-            xaxis_title="Variation",
-            yaxis_title="",
-            height=500
-        )
-        fig2.update_yaxes(autorange="reversed")
+        except Exception as e:
+            st.error(f"❌ Erreur chargement modèles : {e}")
+            return None, None, None
+    
+    # === CHARGEMENT ===
+    model_national, data_national, models_dept = load_prophet_models()
+    
+    if model_national is None:
+        st.warning("""
+        ⚠️ **Modèles Prophet non disponibles**
         
-        st.plotly_chart(fig2, key="pred_geo_top10_hausse", width="stretch")
+        Les modèles Prophet doivent être entraînés au préalable.
         
-        st.dataframe(
-            top_hausse[['Département', 'Région', 'Taux_Urgences_Moyen', 
-                       'Pred_Urgences_2026', 'Delta_2026']],
-            use_container_width=True
-        )
+        **Actions requises :**
+        1. Exécute `python scripts/simulation/train_prophet_models.py`
+        2. Attends la fin de l'entraînement (~2-5 min)
+        3. Recharge cette page
+        """)
         
-        # Prédiction interactive
+        # Fallback : Affiche graphiques existants
         st.markdown("---")
-        st.markdown("### 🎯 Simulateur de Prédiction")
+        st.markdown("### 📊 Analyse Historique (en attendant Prophet)")
         
-        col1, col2, col3 = st.columns(3)
+        df_nat = data['france'].copy()
+        df_nat = df_nat[df_nat['Date'].notna()].sort_values('Date')
+        
+        fig = px.line(
+            df_nat, 
+            x='Date', 
+            y='Taux de passages aux urgences pour grippe',
+            title="Historique National - Passages aux Urgences"
+        )
+        fig.update_layout(height=500, hovermode='x unified')
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.stop()  # Arrête l'exécution si modèles absents
+    
+    # === SI MODÈLES DISPONIBLES : INTERFACE PRINCIPALE ===
+    
+    st.markdown(f"""
+    **Modèles entraînés** : {len(models_dept)} départements  
+    **Données** : {len(data_national)} semaines d'historique
+    """)
+    
+    
+    vacc_multiplier = {
+    '-10%': 0.90, 
+    '-5%': 0.95, 
+    'Default': 1.0,
+    '+5%': 1.05, 
+    '+10%': 1.10, 
+    '+15%': 1.15
+}
+    # === TABS ===
+    tab1, tab2, tab3 = st.tabs([
+        "📈 National", 
+        "🗺️ Départements", 
+        "🎯 Scénarios Vaccination"
+    ])
+    
+    # =========================================================================
+    # TAB 1 : PRÉDICTIONS NATIONALES
+    # =========================================================================
+    with tab1:
+        st.markdown("### 📈 Prédictions Nationales (France)")
+        
+        col1, col2 = st.columns([2, 1])
         
         with col1:
-            couv_input = st.slider("Couverture 65+", 30.0, 80.0, 50.0, 0.1)
-            gap_input = st.slider("Gap Vaccinal", -20.0, 30.0, 5.0, 0.1)
+            periods = st.slider("Semaines à prédire", 12, 104, 52, 4)
         
         with col2:
-            urg_input = st.slider("Taux Urgences", 20.0, 200.0, 80.0, 1.0)
-            hosp_input = st.slider("Taux Hospit.", 5.0, 30.0, 15.0, 0.1)
+            scenario_vacc = st.select_slider(
+                "Scénario vaccination",
+                options=['-10%', '-5%', 'Default', '+5%', '+10%', '+15%'],
+                value='Default'
+            )
         
-        with col3:
-            score_input = st.slider("Score Impact", 100.0, 1000.0, 500.0, 10.0)
+        # === GÉNÉRATION PRÉDICTIONS ===
+        if st.button("🚀 Générer Prédictions", key="btn_pred_nat"):
+            
+            with st.spinner("🔄 Calcul en cours..."):
+                # Crée le futur
+                future = model_national.make_future_dataframe(periods=periods, freq='W')
+                
+                # Applique scénario vaccination
+                last_vacc_rate = data_national['vaccination_rate'].iloc[-1]
+                vacc_multiplier = {
+                    '-10%': 0.90, '-5%': 0.95, 'Default': 1.0,
+                    '+5%': 1.05, '+10%': 1.10, '+15%': 1.15
+                }
+                future['vaccination_rate'] = last_vacc_rate * vacc_multiplier[scenario_vacc]
+                
+                # Prédit
+                forecast = model_national.predict(future)
+                
+                # Stocke en session
+                st.session_state['forecast_nat'] = forecast
+                st.session_state['scenario_nat'] = scenario_vacc
         
-        # Prédire
-        X_new = np.array([[couv_input, gap_input, urg_input, hosp_input, score_input]])
-        prediction = model.predict(X_new)[0]
+        # === AFFICHAGE RÉSULTATS ===
+        if 'forecast_nat' in st.session_state:
+            forecast = st.session_state['forecast_nat']
+            
+            # Métriques
+            st.markdown("#### 📊 Métriques de Performance")
+            
+            # Calcul MAE sur historique
+            historical_forecast = forecast[forecast['ds'].isin(data_national['ds'])]
+            data_aligned = data_national.merge(historical_forecast[['ds', 'yhat']], on='ds')
+            mae = np.mean(np.abs(data_aligned['y'] - data_aligned['yhat']))
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("MAE (Erreur Absolue)", f"{mae:.2f}%")
+            col2.metric("Semaines prédites", f"{periods}")
+            col3.metric("Scénario", st.session_state['scenario_nat'])
+            
+            # Graphique principal
+            st.markdown("#### 🎯 Prédictions vs Historique")
+            
+            fig = go.Figure()
+            
+            # Historique
+            fig.add_trace(go.Scatter(
+                x=data_national['ds'], 
+                y=data_national['y'],
+                mode='markers',
+                name='Données réelles',
+                marker=dict(color='#1f77b4', size=5, opacity=0.6)
+            ))
+            
+            # Prédictions
+            fig.add_trace(go.Scatter(
+                x=forecast['ds'], 
+                y=forecast['yhat'],
+                mode='lines',
+                name='Prédictions',
+                line=dict(color='#ff7f0e', width=3)
+            ))
+            
+            # Intervalle de confiance
+            fig.add_trace(go.Scatter(
+                x=forecast['ds'].tolist() + forecast['ds'].tolist()[::-1],
+                y=forecast['yhat_upper'].tolist() + forecast['yhat_lower'].tolist()[::-1],
+                fill='toself',
+                fillcolor='rgba(255, 127, 14, 0.15)',
+                line=dict(color='rgba(255,255,255,0)'),
+                name='Intervalle 95%',
+                showlegend=True
+            ))
+            
+            today = data_national['ds'].max()
+            
+            fig.add_shape(
+                type="line",
+                x0=today, x1=today,  # Même valeur pour ligne verticale
+                y0=0, y1=1,
+                yref="paper",  # Coordonnées relatives (0=bas, 1=haut)
+                line=dict(color="gray", width=2, dash="dash")
+            )
+            
+            fig.add_annotation(
+                x=today,
+                y=1.02,  # Légèrement au-dessus du graphique
+                yref="paper",
+                text="Aujourd'hui",
+                showarrow=False,
+                font=dict(size=12, color="gray"),
+                xanchor="center"
+            )
+            
+            fig.update_layout(
+                xaxis_title='Date',
+                yaxis_title='Taux passages urgences (%)',
+                hovermode='x unified',
+                height=600
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Prédiction prochain pic
+            st.markdown("#### 🔥 Prochain Pic Épidémique")
+            
+            future_data = forecast[forecast['ds'] > today]
+            peak_date = future_data.loc[future_data['yhat'].idxmax(), 'ds']
+            peak_value = future_data['yhat'].max()
+            peak_upper = future_data.loc[future_data['yhat'].idxmax(), 'yhat_upper']
+            peak_lower = future_data.loc[future_data['yhat'].idxmax(), 'yhat_lower']
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("📅 Date du pic", peak_date.strftime('%d/%m/%Y'))
+            col2.metric("📈 Intensité prévue", f"{peak_value:.1f}%")
+            col3.metric("📊 Fourchette", f"{peak_lower:.1f}% - {peak_upper:.1f}%")
+            
+            # Alerte
+            mean_historical = data_national['y'].mean()
+            if peak_value > mean_historical * 1.5:
+                st.error(f"""
+                ⚠️ **ALERTE** : Le pic prévu est **{(peak_value/mean_historical - 1)*100:.0f}% supérieur** 
+                à la moyenne historique ({mean_historical:.1f}%)
+                """)
+            else:
+                st.success(f"""
+                ✅ Pic modéré : {(peak_value/mean_historical - 1)*100:.0f}% au-dessus de la moyenne
+                """)
+            
+            # Export
+            st.download_button(
+                "📥 Télécharger les prédictions (CSV)",
+                forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].to_csv(index=False).encode('utf-8'),
+                f"predictions_prophet_national_{scenario_vacc}.csv",
+                "text/csv"
+            )
+    
+    # =========================================================================
+    # TAB 2 : PRÉDICTIONS DÉPARTEMENTALES
+    # =========================================================================
+    with tab2:
+        st.markdown("### 🗺️ Prédictions par Département")
         
-        st.success(f"""
-        ### 💉 Prédiction : **{prediction:,.0f} doses nécessaires**
+        if not models_dept:
+            st.warning("⚠️ Aucun modèle départemental disponible")
+        else:
+            # Filtre départements disponibles
+            depts_disponibles = list(models_dept.keys())
+            
+            # Appliquer filtres globaux
+            if region_filter != 'Toutes':
+                depts_region = df_master[df_master['Région'] == region_filter]['Département'].tolist()
+                depts_disponibles = [d for d in depts_disponibles if d in depts_region]
+            
+            if not depts_disponibles:
+                st.warning("Aucun département disponible avec les filtres actuels")
+            else:
+                dept_choisi = st.selectbox("Département", depts_disponibles)
+                
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    periods_dept = st.slider("Semaines à prédire", 12, 104, 52, 4, key="periods_dept")
+                with col2:
+                    scenario_vacc_dept = st.select_slider(
+                        "Scénario vaccination",
+                        options=['-10%', '-5%', 'Default', '+5%', '+10%', '+15%'],
+                        value='Default',
+                        key="scenario_dept"
+                    )
+                
+                if st.button("🚀 Générer Prédictions", key="btn_pred_dept"):
+                    
+                    with st.spinner(f"🔄 Calcul pour {dept_choisi}..."):
+                        import joblib
+                        
+                        # Charge modèle et données
+                        dept_safe = dept_choisi.replace(' ', '_').replace('-', '_')
+                        model_dept = models_dept[dept_choisi]
+                        data_dept = joblib.load(f"models/prophet/data_{dept_safe}.pkl")
+                        
+                        # Prédictions
+                        future_dept = model_dept.make_future_dataframe(periods=periods_dept, freq='W')
+                        last_vacc_dept = data_dept['vaccination_rate'].iloc[-1]
+                        future_dept['vaccination_rate'] = last_vacc_dept * vacc_multiplier[scenario_vacc_dept]
+                        
+                        forecast_dept = model_dept.predict(future_dept)
+                        
+                        st.session_state['forecast_dept'] = forecast_dept
+                        st.session_state['data_dept'] = data_dept
+                        st.session_state['dept_name'] = dept_choisi
+                
+                # Affichage
+                if 'forecast_dept' in st.session_state and st.session_state['dept_name'] == dept_choisi:
+                    forecast_dept = st.session_state['forecast_dept']
+                    data_dept = st.session_state['data_dept']
+                    
+                    # Graphique
+                    fig_dept = go.Figure()
+                    
+                    fig_dept.add_trace(go.Scatter(
+                        x=data_dept['ds'], y=data_dept['y'],
+                        mode='markers', name='Réel',
+                        marker=dict(color='#1f77b4', size=4)
+                    ))
+                    
+                    fig_dept.add_trace(go.Scatter(
+                        x=forecast_dept['ds'], y=forecast_dept['yhat'],
+                        mode='lines', name='Prédiction',
+                        line=dict(color='#ff7f0e', width=2)
+                    ))
+                    
+                    fig_dept.add_trace(go.Scatter(
+                        x=forecast_dept['ds'].tolist() + forecast_dept['ds'].tolist()[::-1],
+                        y=forecast_dept['yhat_upper'].tolist() + forecast_dept['yhat_lower'].tolist()[::-1],
+                        fill='toself', fillcolor='rgba(255, 127, 14, 0.15)',
+                        line=dict(color='rgba(255,255,255,0)'),
+                        name='Intervalle 95%'
+                    ))
+                    
+                    today_dept = data_dept['ds'].max()
+
+                    fig_dept.add_shape(
+                        type="line",
+                        x0=today_dept, x1=today_dept,
+                        y0=0, y1=1,
+                        yref="paper",
+                        line=dict(color="gray", width=2, dash="dash")
+                    )
+
+                    fig_dept.add_annotation(
+                        x=today_dept,
+                        y=1.02,
+                        yref="paper",
+                        text="Aujourd'hui",
+                        showarrow=False,
+                        font=dict(size=11, color="gray")
+                    )
+                    
+                    fig_dept.update_layout(
+                        title=f"Prédictions pour {dept_choisi}",
+                        xaxis_title='Date',
+                        yaxis_title='Taux urgences (%)',
+                        height=600
+                    )
+                    
+                    st.plotly_chart(fig_dept, use_container_width=True)
+    
+    # === GUIDE D'INTERPRÉTATION ===
+    with st.expander("📖 Comment interpréter les prédictions Prophet ?"):
+        st.markdown("""
+        ### Éléments du graphique
+        - **Points bleus** : Données historiques réelles (2011-2024)
+        - **Ligne orange** : Prédictions du modèle Prophet
+        - **Zone orange claire** : Intervalle de confiance à 95%
         
-        Pour un département avec ces caractéristiques, le modèle prédit 
-        qu'il faudra environ **{prediction:,.0f} doses** pour atteindre l'objectif de 75% de couverture.
+        ### Scénarios de vaccination
+        - **Default** : Maintien du taux actuel (~50%)
+        - **+10%** : Augmentation à 55% (campagne ciblée)
+        - **+15%** : Augmentation à 57.5% (campagne ambitieuse)
+        
+        ### Limites du modèle
+        ⚠️ Prophet suppose que les patterns historiques se répètent  
+        ⚠️ Ne prend PAS en compte : nouveaux variants, changements climatiques  
+        ⚠️ L'incertitude augmente avec l'horizon temporel
+        
+        ### Méthodologie
+        - **Modèle** : Prophet (Facebook AI Research)
+        - **Saisonnalité** : Multiplicative (adapté aux épidémies)
+        - **Variables** : Tendance + Saison + Couverture vaccinale
+        - **Entraînement** : 14 ans de données (2011-2024)
         """)
 
 # =============================================================================
@@ -1238,7 +1376,7 @@ st.markdown("""
     <p style="font-size: 1.1rem; font-weight: bold;">🦠 Hackathon Stratégie Vaccinale Grippe 💉</p>
     <p>Dashboard Complet - 5 Pages Fonctionnelles</p>
     <p style="font-size: 0.9rem; color: #999;">
-        Données : Santé Publique France | Année : {df_master['Année_Référence'].iloc[0] if len(df_master) > 0 else 'N/A'}
+        Données : Santé Publique France | Année : 2011 - 2024
     </p>
 </div>
 """, unsafe_allow_html=True)

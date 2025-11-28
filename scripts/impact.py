@@ -76,28 +76,88 @@ df_fusion = df_fusion.dropna(subset=['Taux_Urgences_Moyen', 'Couverture_65plus']
 # =============================================================================
 print("\n📊 [4/5] Calcul des scores d'impact...")
 
-# Score Impact = Taux urgences × (100 - Couverture) / 100
+# Score Impact corrigé (Option B - avec log, sans lag car données agrégées)
+# Formule : Score_Impact = Taux_Urgences × log(1 + (100 - Couverture))
+# Le log modère le poids lorsque la couverture est faible (relation non-linéaire)
 df_fusion['Score_Impact'] = (
-    df_fusion['Taux_Urgences_Moyen'] * 
-    (100 - df_fusion['Couverture_65plus']) / 100
+    df_fusion['Taux_Urgences_Moyen'] *
+    np.log(1 + (100 - df_fusion['Couverture_65plus']))
 ).round(1)
 
-# Gap vaccinal (écart à la moyenne nationale)
+# === GAP_VACCINAL CORRIGÉ (avec composante régionale) ===
+# Calcul de la moyenne nationale
 couverture_moyenne = df_fusion['Couverture_65plus'].mean()
-df_fusion['Gap_Vaccinal'] = (couverture_moyenne - df_fusion['Couverture_65plus']).round(1)
+df_fusion['Gap_National'] = (couverture_moyenne - df_fusion['Couverture_65plus']).round(1)
 
-# Catégorisation du risque
-df_fusion['Catégorie_Risque'] = pd.cut(
-    df_fusion['Score_Impact'],
-    bins=[0, 200, 400, 600, float('inf')],
-    labels=['🟢 Faible', '🟡 Moyen', '🟠 Élevé', '🔴 Critique']
-)
+# Calcul de la moyenne régionale (par région)
+moyennes_regionales = df_fusion.groupby('Région')['Couverture_65plus'].transform('mean')
+df_fusion['Gap_Regional'] = (moyennes_regionales - df_fusion['Couverture_65plus']).round(1)
+
+# Gap vaccinal corrigé : moyenne des deux composantes
+df_fusion['Gap_Vaccinal'] = ((df_fusion['Gap_National'] + df_fusion['Gap_Regional']) / 2).round(1)
+
+# === CLASSIFICATION PAR TYPE DE ZONE ===
+def classifier_type_zone(row):
+    """Classifie le département par type de zone"""
+    dept = row['Département']
+    taux_urg = row['Taux_Urgences_Moyen']
+
+    # Départements urbains denses (grandes métropoles identifiées par nom)
+    urbains_denses_noms = ['Paris', 'Hauts-de-Seine', 'Seine-Saint-Denis', 'Val-de-Marne',
+                           'Rhône', 'Bouches-du-Rhône', 'Nord', 'Gironde', 'Haute-Garonne', 'Loire-Atlantique']
+
+    if any(nom in dept for nom in urbains_denses_noms):
+        return 'Urbain dense'
+    elif taux_urg > 100:
+        return 'Urbain'
+    elif taux_urg > 50:
+        return 'Mixte'
+    else:
+        return 'Rural'
+
+df_fusion['Type_Zone'] = df_fusion.apply(classifier_type_zone, axis=1)
+
+# === POTENTIEL_RÉDUCTION_URGENCES CORRIGÉ (coefficients zonaux) ===
+coef_par_zone = {
+    'Urbain dense': -0.85,
+    'Urbain': -0.70,
+    'Mixte': -0.60,
+    'Rural': -0.45
+}
+
+df_fusion['Coef_Regional'] = df_fusion['Type_Zone'].map(coef_par_zone)
+
+df_fusion['Potentiel_Reduction_Urgences'] = (
+    df_fusion['Gap_Vaccinal'] * df_fusion['Coef_Regional']
+).abs().round(1)
+
+print(f"   ✓ Gap vaccinal (National + Régional)/2 : {df_fusion['Gap_Vaccinal'].mean():.1f} pts")
+print(f"   ✓ Classification zonale : {df_fusion['Type_Zone'].value_counts().to_dict()}")
+print(f"   ✓ Potentiel réduction moyen : {df_fusion['Potentiel_Reduction_Urgences'].mean():.1f} urgences/100k")
+
+# === CATÉGORISATION DU RISQUE CORRIGÉE (quantiles dynamiques) ===
+# Utilisation des quartiles de la distribution réelle
+try:
+    df_fusion['Catégorie_Risque'] = pd.qcut(
+        df_fusion['Score_Impact'],
+        q=4,
+        labels=['🟢 Faible', '🟡 Moyen', '🟠 Élevé', '🔴 Critique'],
+        duplicates='drop'  # Gérer les valeurs identiques
+    )
+    print("   ✓ Catégorie_Risque : quartiles dynamiques (Q1, Q2, Q3)")
+except ValueError:  # Si pas assez de valeurs uniques
+    df_fusion['Catégorie_Risque'] = pd.cut(
+        df_fusion['Score_Impact'],
+        bins=[0, 250, 500, 750, float('inf')],
+        labels=['🟢 Faible', '🟡 Moyen', '🟠 Élevé', '🔴 Critique']
+    )
+    print("   ⚠️  Catégorie_Risque : seuils fixes (pas assez de valeurs uniques pour quartiles)")
 
 # Tri par score décroissant
 df_fusion = df_fusion.sort_values('Score_Impact', ascending=False).reset_index(drop=True)
 
 print(f"   ✓ Score impact moyen : {df_fusion['Score_Impact'].mean():.1f}")
-print(f"   ✓ Départements à risque critique (>600) : {(df_fusion['Score_Impact'] > 600).sum()}")
+print(f"   ✓ Distribution Score_Impact : [{df_fusion['Score_Impact'].min():.0f}, {df_fusion['Score_Impact'].quantile(0.5):.0f}, {df_fusion['Score_Impact'].max():.0f}]")
 
 # =============================================================================
 # 5. RÉSULTATS & INSIGHTS

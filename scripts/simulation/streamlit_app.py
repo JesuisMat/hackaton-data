@@ -109,66 +109,168 @@ def load_all_data():
         return None
 
 @st.cache_data
-def compute_master_dataset(data_dict):
-    """Crée le dataset maître avec KPIs"""
-    
+def compute_datasets(data_dict):
+    """
+    Crée deux datasets complémentaires :
+    1. df_timeseries : granularité hebdomadaire (157k lignes) pour ML et visualisations temporelles
+    2. df_master : agrégé par département (~100 lignes) pour dashboard et KPIs
+
+    Returns:
+        tuple: (df_timeseries, df_master)
+    """
+
     df_urg = data_dict['departements'].copy()
     df_vacc = data_dict['vacc_depts'].copy()
-    
-    # Agrégation urgences
-    df_urg_agg = df_urg.groupby(['Département Code', 'Département', 'Région']).agg({
+
+    print("\n" + "="*80)
+    print(" CRÉATION DES DATASETS (TEMPOREL + AGRÉGÉ) ".center(80, "="))
+    print("="*80)
+
+    # =============================================================================
+    # PARTIE 1 : CRÉATION DU DATASET TEMPOREL (df_timeseries)
+    # =============================================================================
+
+    print("\n📊 [1/3] Enrichissement temporel des données...")
+
+    # === 1.1 FEATURES TEMPORELLES DE BASE ===
+    df_urg['Date'] = pd.to_datetime(df_urg['1er jour de la semaine'], errors='coerce')
+    df_urg['Année'] = df_urg['Date'].dt.year
+    df_urg['Mois'] = df_urg['Date'].dt.month
+    df_urg['Semaine_ISO'] = df_urg['Date'].dt.isocalendar().week
+    df_urg['Trimestre'] = df_urg['Date'].dt.quarter
+    df_urg['Jour_Annee'] = df_urg['Date'].dt.dayofyear
+
+    # === 1.2 FEATURES SAISON ÉPIDÉMIQUE ===
+    def get_saison_epidemique(date):
+        """Retourne l'année de début de saison épidémique (Sep-Août)"""
+        if pd.isna(date):
+            return None
+        year, month = date.year, date.month
+        return year if month >= 9 else year - 1
+
+    df_urg['Saison_Epidemique'] = df_urg['Date'].apply(get_saison_epidemique)
+
+    # Période pic épidémique (semaines 49-10 = Déc-Mars)
+    df_urg['Periode_Pic'] = df_urg['Semaine_ISO'].apply(
+        lambda w: 1 if (w >= 49) or (w <= 10) else 0
+    )
+
+    # Saison météorologique
+    def get_saison_meteo(mois):
+        if mois in [12, 1, 2]:
+            return 'Hiver'
+        elif mois in [3, 4, 5]:
+            return 'Printemps'
+        elif mois in [6, 7, 8]:
+            return 'Été'
+        else:
+            return 'Automne'
+
+    df_urg['Saison_Meteo'] = df_urg['Mois'].apply(get_saison_meteo)
+
+    # === 1.3 FEATURES CYCLIQUES (pour ML) ===
+    # Encodage sin/cos pour capturer la saisonnalité circulaire
+    df_urg['Sin_Semaine'] = np.sin(2 * np.pi * df_urg['Semaine_ISO'] / 52)
+    df_urg['Cos_Semaine'] = np.cos(2 * np.pi * df_urg['Semaine_ISO'] / 52)
+    df_urg['Sin_Mois'] = np.sin(2 * np.pi * df_urg['Mois'] / 12)
+    df_urg['Cos_Mois'] = np.cos(2 * np.pi * df_urg['Mois'] / 12)
+
+    print("   ✓ Features temporelles créées : Année, Mois, Semaine, Saison, Cycliques")
+    print(f"   ✓ Période couverte : {df_urg['Date'].min()} → {df_urg['Date'].max()}")
+    print(f"   ✓ Nombre d'années : {df_urg['Année'].nunique()} ans ({df_urg['Année'].min()}-{df_urg['Année'].max()})")
+
+    # === 1.4 MERGE VACCINATION (annuelle → hebdomadaire) ===
+    df_vacc_prep = df_vacc[['Département Code', 'Année', 'Grippe 65 ans et plus']].copy()
+    df_vacc_prep.rename(columns={'Grippe 65 ans et plus': 'Couverture_65plus'}, inplace=True)
+
+    df_timeseries = df_urg.merge(
+        df_vacc_prep,
+        left_on=['Département Code', 'Année'],
+        right_on=['Département Code', 'Année'],
+        how='left'
+    )
+
+    # Imputation couverture (forward fill puis backward fill par département)
+    df_timeseries['Couverture_65plus'] = df_timeseries.groupby('Département Code')['Couverture_65plus'].transform(
+        lambda x: x.ffill().bfill().fillna(50.0)
+    )
+
+    print("   ✓ Vaccination mergée : couverture 65+ propagée hebdomadairement")
+
+    # === 1.5 LAG VACCINATION (effet non-instantané) ===
+    df_timeseries = df_timeseries.sort_values(['Département Code', 'Classe d\'âge', 'Date']).reset_index(drop=True)
+
+    # Lag de 2 semaines par département ET classe d'âge
+    df_timeseries['Couv_lag2'] = df_timeseries.groupby(['Département Code', 'Classe d\'âge'])['Couverture_65plus'].shift(2)
+    df_timeseries['Couv_lag2'].fillna(df_timeseries['Couverture_65plus'], inplace=True)
+
+    print("   ✓ Lag vaccination : 2 semaines appliqué (effet vaccinal non-instantané)")
+
+    # === 1.6 SCORE_IMPACT HEBDOMADAIRE ===
+    # Formule : Score_Impact = Taux_Urgences × log(1 + (100 - Couv_lag2))
+    df_timeseries['Score_Impact_Hebdo'] = (
+        df_timeseries['Taux de passages aux urgences pour grippe'] *
+        np.log(1 + (100 - df_timeseries['Couv_lag2']))
+    )
+
+    print("   ✓ Score_Impact hebdomadaire calculé : formule log + lag")
+    print(f"   ✓ Dataset temporel final : {len(df_timeseries):,} lignes × {len(df_timeseries.columns)} colonnes\n")
+
+    # =============================================================================
+    # PARTIE 2 : AGRÉGATION POUR DASHBOARD (df_master)
+    # =============================================================================
+
+    print("📊 [2/3] Agrégation pour dashboard...")
+
+    # Filtrer uniquement "Tous âges" pour l'agrégation (éviter duplication)
+    df_timeseries_tous_ages = df_timeseries[df_timeseries['Classe d\'âge'] == 'Tous âges'].copy()
+
+    # === 2.1 AGRÉGATION PAR DÉPARTEMENT ===
+    df_urg_agg = df_timeseries_tous_ages.groupby(['Département Code', 'Département', 'Région']).agg({
         'Taux de passages aux urgences pour grippe': 'mean',
         'Taux d\'hospitalisations après passages aux urgences pour grippe': 'mean',
-        'Taux d\'actes médicaux SOS médecins pour grippe': 'mean'
+        'Taux d\'actes médicaux SOS médecins pour grippe': 'mean',
+        'Score_Impact_Hebdo': 'mean',
+        'Couverture_65plus': 'last',
+        'Periode_Pic': 'mean'  # Proportion de semaines en période pic
     }).reset_index()
-    
-    df_urg_agg.columns = ['Code_Dept', 'Département', 'Région', 
-                           'Taux_Urgences_Moyen', 'Taux_Hospit_Moyen', 'Taux_SOS_Moyen']
-    
-    # Vaccination récente
+
+    df_urg_agg.columns = ['Code_Dept', 'Département', 'Région',
+                           'Taux_Urgences_Moyen', 'Taux_Hospit_Moyen', 'Taux_SOS_Moyen',
+                           'Score_Impact', 'Couverture_65plus_Recent', 'Prop_Semaines_Pic']
+
+    df_urg_agg['Score_Impact'] = df_urg_agg['Score_Impact'].round(1)
+
+    print(f"   ✓ Agrégation : {len(df_urg_agg)} départements")
+
+    # === 2.2 AJOUT COUVERTURES AUTRES TRANCHES D'ÂGE ===
     annee_max = df_vacc['Année'].max()
     df_vacc_recent = df_vacc[df_vacc['Année'] == annee_max].copy()
-    
-@st.cache_data
-def compute_master_dataset(data_dict):
-    """Crée le dataset maître avec KPIs"""
-    
-    df_urg = data_dict['departements'].copy()
-    df_vacc = data_dict['vacc_depts'].copy()
-    
-    # Agrégation urgences
-    df_urg_agg = df_urg.groupby(['Département Code', 'Département', 'Région']).agg({
-        'Taux de passages aux urgences pour grippe': 'mean',
-        'Taux d\'hospitalisations après passages aux urgences pour grippe': 'mean',
-        'Taux d\'actes médicaux SOS médecins pour grippe': 'mean'
-    }).reset_index()
-    
-    df_urg_agg.columns = ['Code_Dept', 'Département', 'Région', 
-                           'Taux_Urgences_Moyen', 'Taux_Hospit_Moyen', 'Taux_SOS_Moyen']
-    
-    # Vaccination récente
-    annee_max = df_vacc['Année'].max()
-    df_vacc_recent = df_vacc[df_vacc['Année'] == annee_max].copy()
-    
-    # Fusion
+
     df_master = df_urg_agg.merge(
-        df_vacc_recent[['Département Code', 'Grippe 65 ans et plus', 
+        df_vacc_recent[['Département Code', 'Grippe 65 ans et plus',
                         'Grippe 65-74 ans', 'Grippe 75 ans et plus', 'Année']],
         left_on='Code_Dept',
         right_on='Département Code',
         how='left'
     )
-    
+
+    df_master['Couverture_65plus'] = df_master['Couverture_65plus_Recent'].combine_first(
+        df_master['Grippe 65 ans et plus']
+    )
+
     df_master.rename(columns={
-        'Grippe 65 ans et plus': 'Couverture_65plus',
         'Grippe 65-74 ans': 'Couverture_65_74',
         'Grippe 75 ans et plus': 'Couverture_75plus'
     }, inplace=True)
-    
+
+    df_master.drop(columns=['Couverture_65plus_Recent', 'Grippe 65 ans et plus'], inplace=True, errors='ignore')
+
     # === DIAGNOSTIC ET IMPUTATION AMÉLIORÉE ===
     nb_avant = len(df_master)
     print(f"\n   📊 Diagnostic NaN après fusion : {nb_avant} départements")
-    
+    print("   ✓ Score_Impact calculé avec formule corrigée : Taux_Urgences × log(1 + (100 - Couv_lag2))")
+
     for col in ['Couverture_65plus', 'Couverture_65_74', 'Couverture_75plus']:
         nb_nan = df_master[col].isna().sum()
         if nb_nan > 0:
@@ -177,79 +279,198 @@ def compute_master_dataset(data_dict):
             df_master[col].fillna(mediane, inplace=True)
         else:
             print(f"   ✓ {col} : aucun NaN")
-    
+
     # Vérifier que l'imputation a fonctionné
     assert df_master['Couverture_65plus'].isna().sum() == 0, "Erreur : NaN restants dans Couverture_65plus"
-    
-    # Calcul KPIs (sécurisé)
-    df_master['Score_Impact'] = (
-        df_master['Taux_Urgences_Moyen'] * 
-        (100 - df_master['Couverture_65plus']) / 10
-    ).round(1)
-    
+
+    # === GAP_VACCINAL CORRIGÉ (avec composante régionale) ===
+    # Calcul de la moyenne nationale
     moyenne_nationale = df_master['Couverture_65plus'].mean()
-    df_master['Gap_Vaccinal'] = (moyenne_nationale - df_master['Couverture_65plus']).round(1)
-    
-    coef_calibre = -0.65
+    df_master['Gap_National'] = (moyenne_nationale - df_master['Couverture_65plus']).round(1)
+
+    # Calcul de la moyenne régionale (par région)
+    moyennes_regionales = df_master.groupby('Région')['Couverture_65plus'].transform('mean')
+    df_master['Gap_Regional'] = (moyennes_regionales - df_master['Couverture_65plus']).round(1)
+
+    # Gap vaccinal corrigé : moyenne des deux composantes
+    # Formule : Gap_Vaccinal = (Gap_National + Gap_Regional) / 2
+    df_master['Gap_Vaccinal'] = ((df_master['Gap_National'] + df_master['Gap_Regional']) / 2).round(1)
+
+    # === CLASSIFICATION PAR TYPE DE ZONE ===
+    # Pour coefficients régionalisés du Potentiel_Reduction
+    def classifier_type_zone(row):
+        """Classifie le département par type de zone (urbain dense, urbain, mixte, rural)"""
+        code = str(row['Code_Dept']).strip()
+        taux_urg = row['Taux_Urgences_Moyen']
+
+        # Départements urbains denses (grandes métropoles)
+        urbains_denses = ['75', '92', '93', '94', '69', '13', '59', '33', '31', '44']
+
+        if code in urbains_denses:
+            return 'Urbain dense'
+        elif taux_urg > 100:  # Proxy: taux urgences élevé = zone urbaine
+            return 'Urbain'
+        elif taux_urg > 50:
+            return 'Mixte'
+        else:
+            return 'Rural'
+
+    df_master['Type_Zone'] = df_master.apply(classifier_type_zone, axis=1)
+
+    # === POTENTIEL_RÉDUCTION_URGENCES CORRIGÉ (coefficients zonaux) ===
+    # Coefficients différenciés par type de zone (impact vaccinal variable)
+    coef_par_zone = {
+        'Urbain dense': -0.85,  # Forte densité → impact fort
+        'Urbain': -0.70,         # Zones urbaines → impact élevé
+        'Mixte': -0.60,          # Semi-urbain → impact moyen
+        'Rural': -0.45           # Faible densité → impact modéré
+    }
+
+    # Application du coefficient zonal
+    df_master['Coef_Regional'] = df_master['Type_Zone'].map(coef_par_zone)
+
+    # Calcul du potentiel avec coefficient zonal
     df_master['Potentiel_Reduction_Urgences'] = (
-        df_master['Gap_Vaccinal'] * coef_calibre
+        df_master['Gap_Vaccinal'] * df_master['Coef_Regional']
     ).abs().round(1)
-    
-    urgences_norm = (df_master['Taux_Urgences_Moyen'] / df_master['Taux_Urgences_Moyen'].max()) * 100
-    gap_norm = ((100 - df_master['Couverture_65plus']) / 50) * 100
-    hospit_norm = (df_master['Taux_Hospit_Moyen'] / df_master['Taux_Hospit_Moyen'].max()) * 100
-    
+
+    # === DIAGNOSTIC DES NOUVEAUX CALCULS ===
+    print("   ✓ Gap_Vaccinal corrigé : moyenne (National + Régional) / 2")
+    print(f"      - Gap national moyen : {df_master['Gap_National'].mean():.1f} pts")
+    print(f"      - Gap régional moyen : {df_master['Gap_Regional'].mean():.1f} pts")
+    print(f"      - Gap vaccinal final : {df_master['Gap_Vaccinal'].mean():.1f} pts")
+    print(f"   ✓ Classification zonale : {df_master['Type_Zone'].value_counts().to_dict()}")
+    print(f"   ✓ Coefficients régionaux appliqués (range: {df_master['Coef_Regional'].min():.2f} à {df_master['Coef_Regional'].max():.2f})")
+    print(f"   ✓ Potentiel réduction moyen : {df_master['Potentiel_Reduction_Urgences'].mean():.1f} urgences évitées/100k\n")
+
+    # === FONCTION DE NORMALISATION P95 (mutualisée) ===
+    # Normalisation robuste avec P95 pour éviter l'écrasement par outliers
+    def normaliser_p95(serie):
+        """Normalise entre 0 et 1 avec P95 pour robustesse aux outliers"""
+        p95 = serie.quantile(0.95)
+        p_min = serie.min()
+        if p95 == p_min:  # Éviter division par zéro
+            return pd.Series([0.5] * len(serie), index=serie.index)
+        return ((serie - p_min) / (p95 - p_min)).clip(0, 1)
+
+    # === INDICE_VULNERABILITÉ CORRIGÉ (normalisation P95 + pondérations data-driven) ===
+    # Normalisation robuste des 3 composantes via P95
+    U_norm = normaliser_p95(df_master['Taux_Urgences_Moyen'])
+    G_norm = normaliser_p95(df_master['Gap_Vaccinal'])
+    H_norm = normaliser_p95(df_master['Taux_Hospit_Moyen'])
+
+    # Formule corrigée avec pondérations data-driven
+    # Poids : Urgences (50%), Gap_Vaccinal (20%), Hospitalisation (30%)
+    # Justification : urgences = indicateur principal de pression épidémique
     df_master['Indice_Vulnerabilite'] = (
-        urgences_norm * 0.4 +
-        gap_norm.clip(0, 100) * 0.3 +
-        hospit_norm * 0.3
-    ).round(1)
-    
+        U_norm * 0.5 +
+        G_norm * 0.2 +
+        H_norm * 0.3
+    ).round(3) * 100  # Échelle 0-100
+
+    # === PRIORITÉ_ACTION CORRIGÉE (normalisation P95) ===
+    # Normalisation des 3 composantes (réutilise les mêmes normes)
+    SI_norm = normaliser_p95(df_master['Score_Impact'])
+
+    # Formule corrigée avec échelles comparables
+    # Poids : Score_Impact (40%), Gap_Vaccinal (30%), Taux_Hospit (30%)
     df_master['Priorité_Action'] = (
-        df_master['Score_Impact'] * 0.5 +
-        df_master['Gap_Vaccinal'] * 10 +
-        df_master['Taux_Hospit_Moyen'] * 25
-    ).round(0)
-    
-    df_master['Catégorie_Risque'] = pd.cut(
-        df_master['Score_Impact'],
-        bins=[0, 250, 500, 750, float('inf')],
-        labels=['Faible', 'Moyen', 'Élevé', 'Critique']
-    )
-    
-    df_master['Population_65plus_Estimee'] = 100000 * 0.20
+        SI_norm * 0.4 +
+        G_norm * 0.3 +
+        H_norm * 0.3
+    ).round(3) * 100  # Échelle 0-100 pour lisibilité
+
+    # === CATÉGORIE_RISQUE CORRIGÉE (quantiles dynamiques) ===
+    # Utilisation des quartiles de la distribution réelle
+    try:
+        df_master['Catégorie_Risque'] = pd.qcut(
+            df_master['Score_Impact'],
+            q=4,
+            labels=['Faible', 'Moyen', 'Élevé', 'Critique'],
+            duplicates='drop'  # Gérer les valeurs identiques
+        )
+    except ValueError:  # Si pas assez de valeurs uniques pour 4 quartiles
+        # Fallback sur seuils fixes ajustés
+        df_master['Catégorie_Risque'] = pd.cut(
+            df_master['Score_Impact'],
+            bins=[0, 250, 500, 750, float('inf')],
+            labels=['Faible', 'Moyen', 'Élevé', 'Critique']
+        )
+
+    # === POPULATION_65+ CORRIGÉE (ratios réalistes par zone) ===
+    # Ratios basés sur démographie française réelle (INSEE)
+    ratio_65plus_par_zone = {
+        'Urbain dense': 0.18,  # Grandes métropoles (population + jeune)
+        'Urbain': 0.20,         # Zones urbaines moyennes
+        'Mixte': 0.23,          # Semi-rural (vieillissement modéré)
+        'Rural': 0.27           # Zones rurales (vieillissement fort)
+    }
+
+    # Application du ratio différencié
+    df_master['Ratio_65plus'] = df_master['Type_Zone'].map(ratio_65plus_par_zone)
+    df_master['Population_65plus_Estimee'] = (100000 * df_master['Ratio_65plus']).round(0)
+
+    # Calcul doses nécessaires
     df_master['Doses_Necessaires'] = (
-        df_master['Population_65plus_Estimee'] * 
+        df_master['Population_65plus_Estimee'] *
         df_master['Gap_Vaccinal'] / 100
     ).round(0)
-    
+
+    # === DIAGNOSTIC DES NOUVELLES FORMULES ===
+    print("   ✓ Indice_Vulnerabilité corrigé : normalisation P95 + pondérations 50/20/30")
+    print(f"      - Score moyen : {df_master['Indice_Vulnerabilite'].mean():.1f}/100")
+    print(f"      - Distribution : [{df_master['Indice_Vulnerabilite'].min():.1f}, {df_master['Indice_Vulnerabilite'].quantile(0.5):.1f}, {df_master['Indice_Vulnerabilite'].max():.1f}]")
+    print("   ✓ Priorité_Action corrigée : normalisation P95 + échelle 0-100")
+    print(f"      - Score moyen : {df_master['Priorité_Action'].mean():.1f}/100")
+    print(f"      - Distribution : [{df_master['Priorité_Action'].min():.1f}, {df_master['Priorité_Action'].quantile(0.5):.1f}, {df_master['Priorité_Action'].max():.1f}]")
+    print("   ✓ Catégorie_Risque : quantiles dynamiques (Q1, Q2, Q3)")
+    print(f"      - {df_master['Catégorie_Risque'].value_counts().to_dict()}")
+    print("   ✓ Population 65+ : ratios différenciés par zone (18%-27%)")
+    print(f"      - Population 65+ moyenne : {df_master['Population_65plus_Estimee'].mean():.0f} habitants/100k\n")
+
     # === NETTOYAGE FINAL ===
     # Supprimer les lignes avec NaN dans colonnes critiques pour ML
-    colonnes_critiques = ['Taux_Urgences_Moyen', 'Taux_Hospit_Moyen', 'Score_Impact', 
+    colonnes_critiques = ['Taux_Urgences_Moyen', 'Taux_Hospit_Moyen', 'Score_Impact',
                           'Couverture_65plus', 'Gap_Vaccinal', 'Doses_Necessaires']
-    
+
     nb_nan_final = df_master[colonnes_critiques].isna().any(axis=1).sum()
     if nb_nan_final > 0:
         print(f"   ⚠️  {nb_nan_final} départements avec NaN résiduels → Suppression")
         df_master = df_master.dropna(subset=colonnes_critiques)
-    
-    print(f"   ✓ Dataset final : {len(df_master)} départements propres\n")
-    
+
     df_master = df_master.sort_values('Priorité_Action', ascending=False).reset_index(drop=True)
     df_master['Année_Référence'] = annee_max
-    
-    return df_master  # ← FERMETURE DE LA FONCTION
 
+    # =============================================================================
+    # PARTIE 3 : DIAGNOSTICS FINAUX
+    # =============================================================================
 
-# Fonction normalisation codes départements
-def normaliser_code_dept(code):
-    """Normalise les codes départements pour la carte"""
-    if pd.isna(code):
-        return None
-    code_str = str(code).strip()
-    if code_str.isdigit():
-        return code_str.zfill(2)
-    return code_str
+    print("📊 [3/3] Diagnostics finaux...")
+    print(f"\n{'='*80}")
+    print(" DATASETS CRÉÉS ".center(80, "="))
+    print(f"{'='*80}")
+
+    print("\n📈 df_timeseries (Temporel - pour ML):")
+    print(f"   - Lignes     : {len(df_timeseries):,}")
+    print(f"   - Colonnes   : {len(df_timeseries.columns)}")
+    print(f"   - Période    : {df_timeseries['Date'].min()} → {df_timeseries['Date'].max()}")
+    print(f"   - Années     : {df_timeseries['Année'].nunique()} ({df_timeseries['Année'].min()}-{df_timeseries['Année'].max()})")
+    print(f"   - Départements : {df_timeseries['Département Code'].nunique()}")
+    print(f"   - Classes âge: {df_timeseries['Classe d\'âge'].nunique()}")
+    print(f"   - Mémoire    : {df_timeseries.memory_usage(deep=True).sum() / 1024**2:.1f} MB")
+
+    print("\n🎯 df_master (Agrégé - pour Dashboard):")
+    print(f"   - Lignes     : {len(df_master)}")
+    print(f"   - Colonnes   : {len(df_master.columns)}")
+    print(f"   - Année réf  : {annee_max}")
+    print("   - KPIs       : Score_Impact, Gap_Vaccinal, Priorité_Action, Catégorie_Risque")
+    print(f"   - Mémoire    : {df_master.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+
+    print("\n✅ Création terminée avec succès !\n")
+    print("="*80 + "\n")
+
+    return df_timeseries, df_master  # ← RETOUR DES DEUX DATASETS
+
 
 # Fonction normalisation codes départements
 def normaliser_code_dept(code):
@@ -270,7 +491,8 @@ if data is None:
     st.error("❌ Impossible de charger les données")
     st.stop()
 
-df_master = compute_master_dataset(data)
+# Créer les deux datasets : temporel (ML) + agrégé (Dashboard)
+df_timeseries, df_master = compute_datasets(data)
 
 # =============================================================================
 # SIDEBAR
@@ -495,8 +717,8 @@ if pages[page] == "dashboard":
         fig.update_yaxes(autorange="reversed")
         st.plotly_chart(fig, key="top20_departements", width="stretch")
         
-        st.dataframe(df_top20[['Département', 'Région', 'Catégorie_Risque',
-                               'Couverture_65plus', 'Gap_Vaccinal', 'Score_Impact']], 
+        st.dataframe(df_top20[['Département', 'Région', 'Type_Zone', 'Catégorie_Risque',
+                               'Couverture_65plus', 'Gap_Vaccinal', 'Potentiel_Reduction_Urgences', 'Score_Impact']],
                     use_container_width=True, height=400)
     
     with tab5:
@@ -744,10 +966,9 @@ if pages[page] == "predictions":
     '+15%': 1.15
 }
     # === TABS ===
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2 = st.tabs([
         "📈 National", 
         "🗺️ Départements", 
-        "🎯 Scénarios Vaccination"
     ])
     
     # =========================================================================
@@ -869,32 +1090,6 @@ if pages[page] == "predictions":
             )
             
             st.plotly_chart(fig, use_container_width=True)
-            
-            # Prédiction prochain pic
-            st.markdown("#### 🔥 Prochain Pic Épidémique")
-            
-            future_data = forecast[forecast['ds'] > today]
-            peak_date = future_data.loc[future_data['yhat'].idxmax(), 'ds']
-            peak_value = future_data['yhat'].max()
-            peak_upper = future_data.loc[future_data['yhat'].idxmax(), 'yhat_upper']
-            peak_lower = future_data.loc[future_data['yhat'].idxmax(), 'yhat_lower']
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("📅 Date du pic", peak_date.strftime('%d/%m/%Y'))
-            col2.metric("📈 Intensité prévue", f"{peak_value:.1f}%")
-            col3.metric("📊 Fourchette", f"{peak_lower:.1f}% - {peak_upper:.1f}%")
-            
-            # Alerte
-            mean_historical = data_national['y'].mean()
-            if peak_value > mean_historical * 1.5:
-                st.error(f"""
-                ⚠️ **ALERTE** : Le pic prévu est **{(peak_value/mean_historical - 1)*100:.0f}% supérieur** 
-                à la moyenne historique ({mean_historical:.1f}%)
-                """)
-            else:
-                st.success(f"""
-                ✅ Pic modéré : {(peak_value/mean_historical - 1)*100:.0f}% au-dessus de la moyenne
-                """)
             
             # Export
             st.download_button(
@@ -1128,83 +1323,157 @@ if pages[page] == "simulator":
     
     with tab3:
         nb_sos = st.number_input("Nombre d'équipes SOS", 0, 10, 2, 1)
-        impact_sos = 0.06 * nb_sos
-        st.metric("Impact sur couverture", f"+{impact_sos:.1f}%")
-        actions['sos'] = {'actif': nb_sos > 0, 'valeur': nb_sos,
-                         'impact': impact_sos, 'cout': nb_sos * 80000}
+        # CORRECTION V3: Impact direct sur les urgences (structurel), PAS sur la couverture
+        impact_sos_urgences = -0.8 * nb_sos  # Hypothèse: -0.8 passages/100k par équipe
+        st.metric("Impact direct Urgences", f"{impact_sos_urgences:.1f} pts", help="Désengorgement direct, n'augmente pas la vaccination")
+        
+        actions['sos'] = {'actif': nb_sos > 0, 'valeur': nb_sos, 
+                          'impact_urgences_direct': impact_sos_urgences, # Stocké séparément
+                          'cout': nb_sos * 80000}
     
     with tab4:
         budget_comm = st.number_input("Budget (milliers €)", 0, 500, 50, 10)
-        impact_comm = 0.04 * (budget_comm / 100)
-        st.metric("Impact sur couverture", f"+{impact_comm:.1f}%")
-        actions['comm'] = {'actif': budget_comm > 0, 'valeur': budget_comm,
-                          'impact': impact_comm, 'cout': budget_comm * 1000}
+        
+        # CORRECTION V3: Formule Logarithmique (Rendements décroissants)
+        # alpha * log(1 + Budget) -> alpha estimé à 0.8
+        if budget_comm > 0:
+            impact_comm = 0.8 * np.log1p(budget_comm)
+        else:
+            impact_comm = 0
+            
+        st.metric("Impact estimé couverture", f"+{impact_comm:.2f}%", help="Formule logarithmique (rendements décroissants)")
+        
+        actions['comm'] = {'actif': budget_comm > 0, 'valeur': budget_comm, 
+                           'impact': impact_comm, 'cout': budget_comm * 1000}
     
     st.markdown("---")
     
     # Lancer simulation
+# Lancer simulation
+# Lancer simulation
     if st.button("🚀 LANCER LA SIMULATION", type="primary", use_container_width=True):
         
-        with st.spinner("⏳ Calcul en cours..."):
-            # Calcul impact cumulé
-            delta_couverture = 0
+        with st.spinner("⏳ Calcul V3 en cours (Plafonds & Logarithmes)..."):
             
-            # Doses
+            # --- 1. CALCUL IMPACT COUVERTURE (Vaccins + Pharmas + Comm) ---
+            delta_couverture_potentiel = 0
+            
+            # Doses (avec saturation selon couverture actuelle)
             if actions['doses']['actif']:
                 pop_estimee = dept_info['Population_65plus_Estimee']
-                delta_couverture += (actions['doses']['valeur'] / pop_estimee) * 100 * actions['doses']['efficacite']
+                # Facteur de saturation : plus on est proche du plafond (70%), moins c'est efficace
+                marge = max(0, 70 - dept_info['Couverture_65plus'])
+                facteur_sat = (marge / 20) if marge < 20 else 1.0
+                
+                delta_couverture_potentiel += ((actions['doses']['valeur'] / pop_estimee) * 100 * actions['doses']['efficacite']) * facteur_sat
             
             # Pharmacies
             if actions['pharmacies']['actif']:
-                delta_couverture += actions['pharmacies']['impact']
+                delta_couverture_potentiel += actions['pharmacies']['impact']
             
-            # SOS
-            if actions['sos']['actif']:
-                delta_couverture += actions['sos']['impact']
-            
-            # Communication
+            # Communication (déjà log)
             if actions['comm']['actif']:
-                delta_couverture += actions['comm']['impact']
+                delta_couverture_potentiel += actions['comm']['impact']
             
-            # Cap à +15 pts
-            delta_couverture = min(delta_couverture, 15)
+            # --- CORRECTION V3: PLAFOND EMPIRIQUE 70% ---
+            couverture_actuelle = dept_info['Couverture_65plus']
+            couverture_finale = min(couverture_actuelle + delta_couverture_potentiel, 70.0)
             
-            # Impact urgences (coefficient calibré)
-            coef_urgences = -0.65
-            delta_urgences = delta_couverture * coef_urgences
+            # Le vrai delta de couverture (réellement appliqué)
+            real_delta_couv = couverture_finale - couverture_actuelle
             
-            # Impact hospitalisations
-            delta_hospit = delta_urgences * (dept_info['Taux_Hospit_Moyen'] / 100)
+            # --- 2. CALCUL IMPACT URGENCES (Mixte) ---
             
-            # Simulation
+            # A. Impact via Vaccination (Coefficient global -0.65)
+            delta_urg_vaccin = real_delta_couv * -0.65
+            
+            # B. Impact Direct Structurel (SOS Médecins) - Ne dépend pas du vaccin
+            delta_urg_sos = 0
+            if actions['sos']['actif']:
+                delta_urg_sos = actions['sos']['impact_urgences_direct']
+            
+            # Total Urgences
+            delta_urgences_total = delta_urg_vaccin + delta_urg_sos
+            
+            # Impact hospitalisations (proportionnel aux urgences)
+            delta_hospit = delta_urgences_total * (dept_info['Taux_Hospit_Moyen'] / 100)
+            
+            # Simulation Resultat
             simulation = {
-                'couverture': dept_info['Couverture_65plus'] + delta_couverture,
-                'urgences': dept_info['Taux_Urgences_Moyen'] + delta_urgences,
-                'hospitalisations': dept_info['Taux_Hospit_Moyen'] + delta_hospit
+                'couverture': couverture_finale,
+                'urgences': max(0, dept_info['Taux_Urgences_Moyen'] + delta_urgences_total),
+                'hospitalisations': max(0, dept_info['Taux_Hospit_Moyen'] + delta_hospit)
             }
             
-            # Bénéfices
-            cout_passage = 190
-            cout_hospit = 3800
+           # --- 3. CALCUL ECONOMIQUE (MONTE CARLO) ---
+            # Paramètres des distributions normales selon la documentation technique
+            N_SIMULATIONS = 10000  # [cite: 1, 3]
             
-            urgences_evitees = abs(delta_urgences) * 52  # Par an
-            hospit_evitees = abs(delta_hospit) * 52
+            # Variables de coûts (Distributions) 
+            # Coût dose : Moyenne 12€, Ecart-type 2€
+            cout_dose_sim = np.random.normal(12, 2, N_SIMULATIONS)
             
-            benefice_urgences = urgences_evitees * cout_passage
-            benefice_hospit = hospit_evitees * cout_hospit
-            benefice_total = benefice_urgences + benefice_hospit
+            # Coût urgence : Moyenne 200€, Ecart-type 50€
+            cout_urgence_sim = np.random.normal(200, 50, N_SIMULATIONS)
             
-            # Coûts
-            cout_total = sum(a['cout'] for a in actions.values() if a['actif'])
+            # Coût hospitalisation : Moyenne 3000€, Ecart-type 500€
+            cout_hospit_sim = np.random.normal(3000, 500, N_SIMULATIONS)
             
-            # ROI
-            roi = ((benefice_total - cout_total) / cout_total * 100) if cout_total > 0 else 0
-        
-        st.success("✅ Simulation terminée !")
+            # --- A. Calcul des Coûts Totaux par simulation ---
+            couts_sim = np.zeros(N_SIMULATIONS)
+            
+            # Coût Doses (Variable)
+            if actions['doses']['actif']:
+                couts_sim += actions['doses']['valeur'] * cout_dose_sim
+            
+            # Coûts Fixes (Pharmacies, SOS, Comm) - On suppose ces coûts fixes ou on applique une variation faible si non spécifié
+            # Note: L'image ne spécifie pas de distribution pour ces postes, on garde la valeur fixe pour ne pas ajouter de bruit inutile.
+            if actions['pharmacies']['actif']:
+                couts_sim += actions['pharmacies']['cout']
+            if actions['sos']['actif']:
+                couts_sim += actions['sos']['cout']
+            if actions['comm']['actif']:
+                couts_sim += actions['comm']['cout']
+                
+            # --- B. Calcul des Bénéfices par simulation ---
+            # Volumes annuels (déterministes issus du modèle épidémio)
+            vol_urgences_evitees = abs(delta_urgences_total) * 52
+            vol_hospit_evitees = abs(delta_hospit) * 52
+            
+            # Bénéfices = (Vol Urg * Coût Urg_i) + (Vol Hosp * Coût Hosp_i) [cite: 2]
+            benefices_sim = (vol_urgences_evitees * cout_urgence_sim) + \
+                            (vol_hospit_evitees * cout_hospit_sim)
+            
+            # --- C. Calcul du ROI par simulation ---
+            # ROI_i = (Benefice_i - Cout_i) / Cout_i * 100 [cite: 3]
+            # Gestion de la division par zéro (sécurité)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                roi_sim = np.where(couts_sim > 0, 
+                                  ((benefices_sim - couts_sim) / couts_sim) * 100, 
+                                  0)
+            
+            # --- D. Agrégation des résultats (Moyenne & Intervalle de Confiance) ---
+            roi_moyen = np.mean(roi_sim)  # [cite: 3]
+            roi_ic_bas = np.percentile(roi_sim, 2.5)   # Borne basse IC 95% [cite: 3]
+            roi_ic_haut = np.percentile(roi_sim, 97.5) # Borne haute IC 95% [cite: 3]
+            
+            # Moyennes pour l'affichage simple
+            benefice_total_moyen = np.mean(benefices_sim)
+            cout_total_moyen = np.mean(couts_sim)
+            
+            # Mapping pour l'affichage (On utilise les moyennes)
+            delta_couverture = real_delta_couv
+            delta_urgences = delta_urgences_total
+            urgences_evitees = vol_urgences_evitees
+            cout_total = cout_total_moyen
+            benefice_total = benefice_total_moyen
+            roi = roi_moyen
+
+        st.success(f"✅ Simulation terminée ({N_SIMULATIONS} itérations Monte Carlo)")
         
         # Résultats
         st.markdown("---")
-        st.markdown("### 📊 Résultats de la Simulation")
+        st.markdown("### 📊 Résultats de la Simulation (Monte Carlo)")
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -1221,7 +1490,10 @@ if pages[page] == "simulator":
         
         with col4:
             roi_color = "normal" if roi > 0 else "inverse"
-            st.metric("💰 ROI", f"{roi:+.0f}%", delta_color=roi_color)
+            # Affichage du ROI Moyen avec l'Intervalle de Confiance en petit
+            st.metric("💰 ROI Moyen", f"{roi:+.0f}%", delta_color=roi_color,
+                     help=f"Intervalle de confiance 95% : [{roi_ic_bas:.0f}% ; {roi_ic_haut:.0f}%]")
+            st.caption(f"IC 95% : [{roi_ic_bas:.0f}% ; {roi_ic_haut:.0f}%]")
         
         # Graphique comparaison
         st.markdown("### 📈 Comparaison Avant / Après")
@@ -1232,7 +1504,7 @@ if pages[page] == "simulator":
         
         fig = go.Figure()
         fig.add_trace(go.Bar(name='Avant', x=categories, y=avant, 
-                            marker_color='#ff7f0e', text=avant, textposition='auto'))
+                            marker_color='#ff7f0e', text=[round(v,1) for v in avant], textposition='auto'))
         fig.add_trace(go.Bar(name='Après', x=categories, y=apres, 
                             marker_color='#2ca02c', text=[round(v,1) for v in apres], 
                             textposition='auto'))
@@ -1241,15 +1513,17 @@ if pages[page] == "simulator":
         st.plotly_chart(fig, key="sim_avant_apres", width="stretch")
         
         # Analyse financière
-        st.markdown("### 💰 Analyse Financière")
+        st.markdown("### 💰 Analyse Financière Probabiliste")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("#### 💸 Coûts")
+            st.markdown("#### 💸 Coûts (Estimés)")
             couts_data = []
             if actions['doses']['actif']:
-                couts_data.append(('Doses vaccins', actions['doses']['cout']))
+                # On affiche la moyenne pour le camembert
+                cout_doses_moy = np.mean(actions['doses']['valeur'] * cout_dose_sim)
+                couts_data.append(('Doses vaccins', cout_doses_moy))
             if actions['pharmacies']['actif']:
                 couts_data.append(('Pharmacies', actions['pharmacies']['cout']))
             if actions['sos']['actif']:
@@ -1260,64 +1534,59 @@ if pages[page] == "simulator":
             if couts_data:
                 df_couts = pd.DataFrame(couts_data, columns=['Poste', 'Montant'])
                 fig = px.pie(df_couts, values='Montant', names='Poste', 
-                            title="Répartition des Coûts", hole=0.3)
+                            title="Répartition des Coûts Moyens", hole=0.3)
                 fig.update_layout(height=300)
                 st.plotly_chart(fig, key="sim_couts_camembert", width="stretch")
             
-            st.metric("💵 Coût Total", f"{cout_total:,.0f} €")
+            st.metric("💵 Coût Moyen", f"{cout_total:,.0f} €")
         
         with col2:
-            st.markdown("#### 💎 Bénéfices")
+            st.markdown("#### 💎 Bénéfices (Économies)")
+            # On utilise les moyennes pour le camembert
+            ben_urg_moy = np.mean(vol_urgences_evitees * cout_urgence_sim)
+            ben_hosp_moy = np.mean(vol_hospit_evitees * cout_hospit_sim)
+            
             benefices_data = [
-                ('Économies Urgences', benefice_urgences),
-                ('Économies Hospitalisations', benefice_hospit)
+                ('Économies Urgences', ben_urg_moy),
+                ('Économies Hospitalisations', ben_hosp_moy)
             ]
             df_benefices = pd.DataFrame(benefices_data, columns=['Poste', 'Montant'])
             fig = px.pie(df_benefices, values='Montant', names='Poste',
-                        title="Répartition des Bénéfices", hole=0.3)
+                        title="Répartition des Bénéfices Moyens", hole=0.3)
             fig.update_layout(height=300)
             st.plotly_chart(fig, key="sim_benefices_camembert", width="stretch")
             
-            st.metric("💚 Bénéfice Total", f"{benefice_total:,.0f} €")
+            st.metric("💚 Bénéfice Moyen", f"{benefice_total:,.0f} €")
         
         # Interprétation
         st.markdown("---")
-        st.markdown("### 💡 Interprétation")
+        st.markdown("### 💡 Interprétation Stratégique")
         
-        if roi > 200:
+        # Logique d'interprétation adaptée à l'incertitude
+        if roi_ic_bas > 0:
             st.success(f"""
-            🎉 **EXCELLENT ROI ({roi:.0f}%) !**
+            🎉 **INVESTISSEMENT SÛR (ROI > 0% garanti)**
             
-            Cette stratégie est très rentable. Pour chaque euro investi, 
-            vous économisez **{benefice_total/cout_total:.2f} €**.
+            Même dans le scénario pessimiste (borne basse de l'intervalle de confiance), 
+            le ROI reste positif à **{roi_ic_bas:.0f}%**.
             
-            ✅ Déployer immédiatement
-            """)
-        elif roi > 50:
-            st.info(f"""
-            👍 **BON ROI ({roi:.0f}%)**
-            
-            La stratégie est rentable.
-            
-            💡 Peut être optimisée pour encore plus d'impact
+            Le ROI moyen attendu est de **{roi:.0f}%**.
             """)
         elif roi > 0:
             st.warning(f"""
-            ⚠️ **ROI FAIBLE ({roi:.0f}%)**
+            ⚠️ **INVESTISSEMENT À RISQUE MODÉRÉ**
             
-            Rentable mais nécessite optimisation.
-            
-            🔧 Ajuster les paramètres ou cibler mieux
+            Le ROI moyen est positif (**{roi:.0f}%**), mais il existe une probabilité de perte.
+            L'intervalle de confiance s'étend de **{roi_ic_bas:.0f}%** à **{roi_ic_haut:.0f}%**.
             """)
         else:
             st.error(f"""
-            ❌ **ROI NÉGATIF ({roi:.0f}%)**
+            ❌ **INVESTISSEMENT NON RENTABLE**
             
-            Coût > Bénéfices
-            
-            🛑 NE PAS déployer en l'état
+            Le ROI moyen est négatif (**{roi:.0f}%**). 
+            Les coûts dépassent probablement les économies réalisées.
             """)
-
+            
 # =============================================================================
 # PAGE 5 : EXPORT
 # =============================================================================

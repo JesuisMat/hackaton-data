@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-DASHBOARD COMPLET - 5 PAGES FONCTIONNELLES
+🚀 DASHBOARD COMPLET - 5 PAGES FONCTIONNELLES
 Hackathon Stratégie Vaccinale Grippe - Version Finale
 """
 
@@ -25,8 +25,8 @@ warnings.filterwarnings('ignore')
 # CONFIGURATION
 # =============================================================================
 st.set_page_config(
-    page_title="Stratégie Vaccinale Grippe",
-    page_icon="📊",
+    page_title="🦠 Stratégie Vaccinale Grippe",
+    page_icon="💉",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -67,17 +67,6 @@ st.markdown("""
     /* Forcer fond gris sur tout Streamlit */
     .stApp {
         background-color: var(--background-grey) !important;
-    }
-
-    /* Cacher le header Streamlit par défaut */
-    header[data-testid="stHeader"] {
-        background-color: white !important;
-        border-bottom: 1px solid var(--border-color);
-    }
-
-    /* Cacher le bouton hamburger menu (optionnel) */
-    button[kind="header"] {
-        display: none;
     }
 
     /* Header principal */
@@ -151,50 +140,16 @@ st.markdown("""
         color: black !important;
     }
 
-    /* Headers sidebar */
-    section[data-testid="stSidebar"] h2,
-    section[data-testid="stSidebar"] h3 {
-        color: black !important;
-        font-weight: 700 !important;
-        padding: 0.5rem 0 !important;
-    }
-
-    /* Radio buttons navigation */
-    section[data-testid="stSidebar"] [data-baseweb="radio"] {
-        gap: 0.5rem;
-    }
-
-    section[data-testid="stSidebar"] [data-baseweb="radio"] > div {
-        background-color: white;
+    /* Items de navigation sélectionnés */
+    section[data-testid="stSidebar"] [data-baseweb="radio"] > div:first-child {
+        background-color: var(--background-grey);
         border-radius: 8px;
         padding: 0.75rem;
-        margin: 0.25rem 0;
-        border: 1px solid transparent;
-        transition: all 0.2s;
-    }
-
-    section[data-testid="stSidebar"] [data-baseweb="radio"] > div:hover {
-        background-color: var(--background-grey);
     }
 
     section[data-testid="stSidebar"] [aria-checked="true"] {
         background-color: var(--background-grey) !important;
         font-weight: 700 !important;
-        border-color: var(--border-color) !important;
-    }
-
-    /* Labels dans sidebar */
-    section[data-testid="stSidebar"] label {
-        color: black !important;
-        font-weight: 700 !important;
-    }
-
-    /* Multiselect tags dans sidebar */
-    section[data-testid="stSidebar"] [data-baseweb="tag"] {
-        background-color: var(--bleu-france) !important;
-        color: white !important;
-        border-radius: 100px;
-        padding: 0.25rem 0.5rem;
     }
 
     /* Tabs (style Figma) - Fond blanc pour contenu */
@@ -421,7 +376,7 @@ def load_all_data():
         }
     
     except Exception as e:
-        st.error(f"Erreur de chargement : {e}")
+        st.error(f"❌ Erreur de chargement : {e}")
         return None
 
 @st.cache_data
@@ -446,7 +401,7 @@ def compute_datasets(data_dict):
     # PARTIE 1 : CRÉATION DU DATASET TEMPOREL (df_timeseries)
     # =============================================================================
 
-    print("\n[1/3] Enrichissement temporel des données...")
+    print("\n📊 [1/3] Enrichissement temporel des données...")
 
     # === 1.1 FEATURES TEMPORELLES DE BASE ===
     df_urg['Date'] = pd.to_datetime(df_urg['1er jour de la semaine'], errors='coerce')
@@ -536,7 +491,7 @@ def compute_datasets(data_dict):
     # PARTIE 2 : AGRÉGATION POUR DASHBOARD (df_master)
     # =============================================================================
 
-    print("[2/3] Agrégation pour dashboard...")
+    print("📊 [2/3] Agrégation pour dashboard...")
 
     # Filtrer uniquement "Tous âges" pour l'agrégation (éviter duplication)
     df_timeseries_tous_ages = df_timeseries[df_timeseries['Classe d\'âge'] == 'Tous âges'].copy()
@@ -584,14 +539,14 @@ def compute_datasets(data_dict):
 
     # === DIAGNOSTIC ET IMPUTATION AMÉLIORÉE ===
     nb_avant = len(df_master)
-    print(f"\n   Diagnostic NaN après fusion : {nb_avant} départements")
+    print(f"\n   📊 Diagnostic NaN après fusion : {nb_avant} départements")
     print("   ✓ Score_Impact calculé avec formule corrigée : Taux_Urgences × log(1 + (100 - Couv_lag2))")
 
     for col in ['Couverture_65plus', 'Couverture_65_74', 'Couverture_75plus']:
         nb_nan = df_master[col].isna().sum()
         if nb_nan > 0:
             mediane = df_master[col].median()
-            print(f"    {nb_nan} NaN dans {col} → Imputation par médiane ({mediane:.1f}%)")
+            print(f"   ⚠️  {nb_nan} NaN dans {col} → Imputation par médiane ({mediane:.1f}%)")
             df_master[col].fillna(mediane, inplace=True)
         else:
             print(f"   ✓ {col} : aucun NaN")
@@ -751,7 +706,7 @@ def compute_datasets(data_dict):
 
     nb_nan_final = df_master[colonnes_critiques].isna().any(axis=1).sum()
     if nb_nan_final > 0:
-        print(f"    {nb_nan_final} départements avec NaN résiduels → Suppression")
+        print(f"   ⚠️  {nb_nan_final} départements avec NaN résiduels → Suppression")
         df_master = df_master.dropna(subset=colonnes_critiques)
 
     df_master = df_master.sort_values('Priorité_Action', ascending=False).reset_index(drop=True)
@@ -761,12 +716,12 @@ def compute_datasets(data_dict):
     # PARTIE 3 : DIAGNOSTICS FINAUX
     # =============================================================================
 
-    print("[3/3] Diagnostics finaux...")
+    print("📊 [3/3] Diagnostics finaux...")
     print(f"\n{'='*80}")
     print(" DATASETS CRÉÉS ".center(80, "="))
     print(f"{'='*80}")
 
-    print("\ndf_timeseries (Temporel - pour ML):")
+    print("\n📈 df_timeseries (Temporel - pour ML):")
     print(f"   - Lignes     : {len(df_timeseries):,}")
     print(f"   - Colonnes   : {len(df_timeseries.columns)}")
     print(f"   - Période    : {df_timeseries['Date'].min()} → {df_timeseries['Date'].max()}")
@@ -775,14 +730,14 @@ def compute_datasets(data_dict):
     print(f"   - Classes âge: {df_timeseries['Classe d\'âge'].nunique()}")
     print(f"   - Mémoire    : {df_timeseries.memory_usage(deep=True).sum() / 1024**2:.1f} MB")
 
-    print("\ndf_master (Agrégé - pour Dashboard):")
+    print("\n🎯 df_master (Agrégé - pour Dashboard):")
     print(f"   - Lignes     : {len(df_master)}")
     print(f"   - Colonnes   : {len(df_master.columns)}")
     print(f"   - Année réf  : {annee_max}")
     print("   - KPIs       : Score_Impact, Gap_Vaccinal, Priorité_Action, Catégorie_Risque")
     print(f"   - Mémoire    : {df_master.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
 
-    print("\nCréation terminée avec succès !\n")
+    print("\n✅ Création terminée avec succès !\n")
     print("="*80 + "\n")
 
     return df_timeseries, df_master  # ← RETOUR DES DEUX DATASETS
@@ -814,32 +769,32 @@ df_timeseries, df_master = compute_datasets(data)
 # SIDEBAR
 # =============================================================================
 
-st.sidebar.markdown("## Navigation")
+st.sidebar.markdown("## 🎯 Navigation")
 
 pages = {
-    "Tableau de Bord": "dashboard",
-    "Cartographie": "map",
-    "Prédictions ML": "predictions",
-    "Simulateur": "simulator",
-    "Export": "export"
+    "🏠 Tableau de Bord": "dashboard",
+    "🗺️ Cartographie": "map",
+    "📈 Prédictions ML": "predictions",
+    "🎯 Simulateur": "simulator",
+    "📥 Export": "export"
 }
 
 page = st.sidebar.radio("Choisissez une page :", list(pages.keys()), label_visibility="collapsed")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### Filtres Globaux")
+st.sidebar.markdown("### 🔧 Filtres Globaux")
 
 annees_disponibles = sorted(data['departements']['Année'].dropna().unique())
 if len(annees_disponibles) > 0:
-    annee_selectionnee = st.sidebar.selectbox("Année", ['Toutes'] + [int(a) for a in annees_disponibles], index=0)
+    annee_selectionnee = st.sidebar.selectbox("📅 Année", ['Toutes'] + [int(a) for a in annees_disponibles], index=0)
 else:
     annee_selectionnee = 'Toutes'
 
 regions_disponibles = ['Toutes'] + sorted(df_master['Région'].unique().tolist())
-region_filter = st.sidebar.selectbox("Région", regions_disponibles)
+region_filter = st.sidebar.selectbox("📍 Région", regions_disponibles)
 
 risque_filter = st.sidebar.multiselect(
-    "Niveau de risque",
+    "⚠️ Niveau de risque",
     ['Critique', 'Élevé', 'Moyen', 'Faible'],
     default=['Critique', 'Élevé']
 )
@@ -853,7 +808,7 @@ if risque_filter:
 
 st.sidebar.markdown("---")
 st.sidebar.info(f"""
-**Données filtrées**
+**📊 Données filtrées**
 - {len(df_filtered)} départements
 - Année : {annee_selectionnee}
 - Région : {region_filter}
@@ -864,7 +819,7 @@ st.sidebar.info(f"""
 # =============================================================================
 
 if pages[page] == "dashboard":
-    st.markdown('<div class="main-header">Tableau de Bord Stratégique</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">🏠 Tableau de Bord Stratégique</div>', unsafe_allow_html=True)
     
     # KPIs
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -872,34 +827,34 @@ if pages[page] == "dashboard":
     with col1:
         couv_moyenne = df_master['Couverture_65plus'].mean()
         delta_couv = couv_moyenne - df_master['Couverture_65plus'].quantile(0.25)
-        st.metric("Couverture Moyenne 65+", f"{couv_moyenne:.1f}%", f"+{delta_couv:.1f}% vs Q1")
+        st.metric("💉 Couverture Moyenne 65+", f"{couv_moyenne:.1f}%", f"+{delta_couv:.1f}% vs Q1")
     
     with col2:
         urgences_tot = df_master['Taux_Urgences_Moyen'].sum()
-        st.metric("Passages Urgences", f"{urgences_tot:,.0f}", "cumul/100k hab.")
+        st.metric("🏥 Passages Urgences", f"{urgences_tot:,.0f}", "cumul/100k hab.")
     
     with col3:
         dept_critiques = (df_master['Catégorie_Risque'] == 'Critique').sum()
         pct_critiques = dept_critiques / len(df_master) * 100
-        st.metric("Dép. Critiques", dept_critiques, f"{pct_critiques:.1f}%", delta_color="inverse")
+        st.metric("🚨 Dép. Critiques", dept_critiques, f"{pct_critiques:.1f}%", delta_color="inverse")
     
     with col4:
         potentiel_total = df_master['Potentiel_Reduction_Urgences'].sum()
-        st.metric("Potentiel Réduction", f"{potentiel_total:,.0f}", "urgences/an")
+        st.metric("📉 Potentiel Réduction", f"{potentiel_total:,.0f}", "urgences/an")
     
     with col5:
         doses_totales = df_master['Doses_Necessaires'].sum()
-        st.metric("Doses Nécessaires", f"{doses_totales/1000:.0f}k", "objectif 75%")
+        st.metric("💉 Doses Nécessaires", f"{doses_totales/1000:.0f}k", "objectif 75%")
     
     st.markdown("---")
     
     # Tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "Évolution", "Couverture", "Urgences", "Départements", "Heatmap"
+        "📈 Évolution", "💉 Couverture", "🏥 Urgences", "🎯 Départements", "🌡️ Heatmap"
     ])
     
     with tab1:
-        st.markdown("### Évolution Temporelle")
+        st.markdown("### 📈 Évolution Temporelle")
         col1, col2 = st.columns([3, 1])
         
         with col1:
@@ -948,7 +903,7 @@ if pages[page] == "dashboard":
                 st.plotly_chart(fig, key="evolution_departemental", width="stretch")
     
     with tab2:
-        st.markdown("### Couverture Vaccinale")
+        st.markdown("### 💉 Couverture Vaccinale")
         col1, col2 = st.columns(2)
         
         with col1:
@@ -981,7 +936,7 @@ if pages[page] == "dashboard":
             st.plotly_chart(fig2, key="couverture_evolution", width="stretch")
     
     with tab3:
-        st.markdown("### Urgences & Hospitalisations")
+        st.markdown("### 🏥 Urgences & Hospitalisations")
         col1, col2 = st.columns(2)
         
         with col1:
@@ -1010,36 +965,26 @@ if pages[page] == "dashboard":
                         color='Catégorie_Risque',
                         color_discrete_map={'Faible':'#28a745', 'Moyen':'#ffc107',
                                            'Élevé':'#fd7e14', 'Critique':'#dc3545'},
-                        title="Hospit. (pour 100k hab.) par Risque")
+                        title="Taux Hospitalisation par Risque")
             fig.update_layout(height=500, showlegend=False)
             st.plotly_chart(fig, key="boxplot_hospit_risque", width="stretch")
     
     with tab4:
-        st.markdown("### Départements Prioritaires")
-
-        # Mapping des métriques avec labels clairs
-        metriques_labels = {
-            'Priorité_Action': "Priorité d'Action",
-            'Score_Impact': "Score d'Impact",
-            'Gap_Vaccinal': "Gap Vaccinal",
-            'Taux_Urgences_Moyen': "Urgences (pour 100k hab.)"
-        }
-
-        metrique_label = st.selectbox("Classer par", list(metriques_labels.values()))
-        # Retrouver la clé de colonne correspondante
-        metrique = [k for k, v in metriques_labels.items() if v == metrique_label][0]
-
+        st.markdown("### 🎯 Départements Prioritaires")
+        metrique = st.selectbox("Classer par", ['Priorité_Action', 'Score_Impact', 
+                                                 'Gap_Vaccinal', 'Taux_Urgences_Moyen'])
+        
         df_top20 = df_filtered.sort_values(metrique, ascending=False).head(20)
-
-        colors_map = {'Critique':'#dc3545', 'Élevé':'#fd7e14',
+        
+        colors_map = {'Critique':'#dc3545', 'Élevé':'#fd7e14', 
                      'Moyen':'#ffc107', 'Faible':'#28a745'}
         colors = [colors_map.get(cat, '#6c757d') for cat in df_top20['Catégorie_Risque']]
-
+        
         fig = go.Figure()
         fig.add_trace(go.Bar(y=df_top20['Département'], x=df_top20[metrique],
                             orientation='h', marker_color=colors,
                             text=df_top20[metrique].round(1), textposition='outside'))
-        fig.update_layout(title=f"Top 20 - {metrique_label}", height=700)
+        fig.update_layout(title=f"Top 20 - {metrique}", height=700)
         fig.update_yaxes(autorange="reversed")
         st.plotly_chart(fig, key="top20_departements", width="stretch")
         
@@ -1048,7 +993,7 @@ if pages[page] == "dashboard":
                     use_container_width=True, height=400)
     
     with tab5:
-        st.markdown("### Heatmap Régionale")
+        st.markdown("### 🌡️ Heatmap Régionale")
         
         df_hm = df_master.groupby('Région').agg({
             'Taux_Urgences_Moyen': 'mean',
@@ -1069,7 +1014,7 @@ if pages[page] == "dashboard":
         fig = go.Figure(data=go.Heatmap(
             z=z_data,
             x=df_hm['Région'],
-            y=['Urgences (100k hab.)', 'Gap Vaccinal', 'Score Impact', 'Hospit. (100k hab.)'],
+            y=['Taux Urgences', 'Gap Vaccinal', 'Score Impact', 'Taux Hospit.'],
             colorscale='RdYlGn_r',
             text=df_hm[['Taux_Urgences_Moyen', 'Gap_Vaccinal', 
                         'Score_Impact', 'Taux_Hospit_Moyen']].T.values.round(1),
@@ -1085,7 +1030,7 @@ if pages[page] == "dashboard":
 # =============================================================================
 
 elif pages[page] == "map":
-    st.markdown('<div class="main-header">Cartographie Intelligente</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">🗺️ Cartographie Intelligente</div>', unsafe_allow_html=True)
     
     st.markdown("### Carte Interactive de France")
     
@@ -1100,7 +1045,7 @@ elif pages[page] == "map":
         'Priorité_Action': "Priorité d'Action",
         'Couverture_65plus': "Couverture 65+ (%)",
         'Gap_Vaccinal': "Gap Vaccinal (pts)",
-        'Taux_Urgences_Moyen': "Urgences (pour 100k hab.)",
+        'Taux_Urgences_Moyen': "Taux Urgences",
         'Indice_Vulnerabilite': "Indice Vulnérabilité"
     }
     
@@ -1153,7 +1098,7 @@ elif pages[page] == "map":
         with col1:
             top_dept = df_map.loc[df_map[indicateur_carte].idxmax()]
             st.error(f"""
-            **Maximum**
+            **🔴 Maximum**
             
             {top_dept['Département']}
             
@@ -1163,7 +1108,7 @@ elif pages[page] == "map":
         with col2:
             bottom_dept = df_map.loc[df_map[indicateur_carte].idxmin()]
             st.success(f"""
-            **Minimum**
+            **🟢 Minimum**
             
             {bottom_dept['Département']}
             
@@ -1173,7 +1118,7 @@ elif pages[page] == "map":
         with col3:
             mean_val = df_map[indicateur_carte].mean()
             st.warning(f"""
-            **Moyenne**
+            **📊 Moyenne**
             
             Nationale
             
@@ -1187,7 +1132,7 @@ elif pages[page] == "map":
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("### Top 10")
+            st.markdown("### 🔝 Top 10")
             top10 = df_map.nlargest(10, indicateur_carte)
             fig = go.Figure(data=[go.Bar(y=top10['Département'], x=top10[indicateur_carte],
                                         orientation='h', marker_color='#dc3545')])
@@ -1196,7 +1141,7 @@ elif pages[page] == "map":
             st.plotly_chart(fig, key="carte_fallback_top10", width="stretch")
         
         with col2:
-            st.markdown("### Bottom 10")
+            st.markdown("### 🔻 Bottom 10")
             bottom10 = df_map.nsmallest(10, indicateur_carte)
             fig = go.Figure(data=[go.Bar(y=bottom10['Département'], x=bottom10[indicateur_carte],
                                         orientation='h', marker_color='#28a745')])
@@ -1209,7 +1154,7 @@ elif pages[page] == "map":
 # =============================================================================
 
 if pages[page] == "predictions":
-    st.markdown('<div class="main-header">Prédictions avec Prophet</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">📈 Prédictions avec Prophet</div>', unsafe_allow_html=True)
     
     # === VÉRIFICATION MODÈLES PROPHET ===
     @st.cache_resource
@@ -1239,7 +1184,7 @@ if pages[page] == "predictions":
             return model_nat, data_nat, models_dept
         
         except Exception as e:
-            st.error(f"Erreur chargement modèles : {e}")
+            st.error(f"❌ Erreur chargement modèles : {e}")
             return None, None, None
     
     # === CHARGEMENT ===
@@ -1247,7 +1192,7 @@ if pages[page] == "predictions":
     
     if model_national is None:
         st.warning("""
-        **Modèles Prophet non disponibles**
+        ⚠️ **Modèles Prophet non disponibles**
         
         Les modèles Prophet doivent être entraînés au préalable.
         
@@ -1259,7 +1204,7 @@ if pages[page] == "predictions":
         
         # Fallback : Affiche graphiques existants
         st.markdown("---")
-        st.markdown("### Analyse Historique (en attendant Prophet)")
+        st.markdown("### 📊 Analyse Historique (en attendant Prophet)")
         
         df_nat = data['france'].copy()
         df_nat = df_nat[df_nat['Date'].notna()].sort_values('Date')
@@ -1293,15 +1238,15 @@ if pages[page] == "predictions":
 }
     # === TABS ===
     tab1, tab2 = st.tabs([
-        "National", 
-        "Départements", 
+        "📈 National", 
+        "🗺️ Départements", 
     ])
     
     # =========================================================================
     # TAB 1 : PRÉDICTIONS NATIONALES
     # =========================================================================
     with tab1:
-        st.markdown("### Prédictions Nationales (France)")
+        st.markdown("### 📈 Prédictions Nationales (France)")
         
         col1, col2 = st.columns([2, 1])
         
@@ -1316,9 +1261,9 @@ if pages[page] == "predictions":
             )
         
         # === GÉNÉRATION PRÉDICTIONS ===
-        if st.button("Générer Prédictions", key="btn_pred_nat"):
+        if st.button("🚀 Générer Prédictions", key="btn_pred_nat"):
             
-            with st.spinner("Calcul en cours..."):
+            with st.spinner("🔄 Calcul en cours..."):
                 # Crée le futur
                 future = model_national.make_future_dataframe(periods=periods, freq='W')
                 
@@ -1342,7 +1287,7 @@ if pages[page] == "predictions":
             forecast = st.session_state['forecast_nat']
             
             # Métriques
-            st.markdown("#### Métriques de Performance")
+            st.markdown("#### 📊 Métriques de Performance")
             
             # Calcul MAE sur historique
             historical_forecast = forecast[forecast['ds'].isin(data_national['ds'])]
@@ -1355,7 +1300,7 @@ if pages[page] == "predictions":
             col3.metric("Scénario", st.session_state['scenario_nat'])
             
             # Graphique principal
-            st.markdown("#### Prédictions vs Historique")
+            st.markdown("#### 🎯 Prédictions vs Historique")
             
             fig = go.Figure()
             
@@ -1410,7 +1355,7 @@ if pages[page] == "predictions":
             
             fig.update_layout(
                 xaxis_title='Date',
-                yaxis_title='Passages urgences (pour 100k hab.)',
+                yaxis_title='Taux passages urgences (%)',
                 hovermode='x unified',
                 height=600
             )
@@ -1419,7 +1364,7 @@ if pages[page] == "predictions":
             
             # Export
             st.download_button(
-                "Télécharger les prédictions (CSV)",
+                "📥 Télécharger les prédictions (CSV)",
                 forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].to_csv(index=False).encode('utf-8'),
                 f"predictions_prophet_national_{scenario_vacc}.csv",
                 "text/csv"
@@ -1429,10 +1374,10 @@ if pages[page] == "predictions":
     # TAB 2 : PRÉDICTIONS DÉPARTEMENTALES
     # =========================================================================
     with tab2:
-        st.markdown("### Prédictions par Département")
+        st.markdown("### 🗺️ Prédictions par Département")
         
         if not models_dept:
-            st.warning("Aucun modèle départemental disponible")
+            st.warning("⚠️ Aucun modèle départemental disponible")
         else:
             # Filtre départements disponibles
             depts_disponibles = list(models_dept.keys())
@@ -1458,7 +1403,7 @@ if pages[page] == "predictions":
                         key="scenario_dept"
                     )
                 
-                if st.button("Générer Prédictions", key="btn_pred_dept"):
+                if st.button("🚀 Générer Prédictions", key="btn_pred_dept"):
                     
                     with st.spinner(f"🔄 Calcul pour {dept_choisi}..."):
                         import joblib
@@ -1529,14 +1474,14 @@ if pages[page] == "predictions":
                     fig_dept.update_layout(
                         title=f"Prédictions pour {dept_choisi}",
                         xaxis_title='Date',
-                        yaxis_title='Urgences (pour 100k hab.)',
+                        yaxis_title='Taux urgences (%)',
                         height=600
                     )
                     
                     st.plotly_chart(fig_dept, use_container_width=True)
     
     # === GUIDE D'INTERPRÉTATION ===
-    with st.expander("Comment interpréter les prédictions Prophet ?"):
+    with st.expander("📖 Comment interpréter les prédictions Prophet ?"):
         st.markdown("""
         ### Éléments du graphique
         - **Points bleus** : Données historiques réelles (2011-2024)
@@ -1549,9 +1494,9 @@ if pages[page] == "predictions":
         - **+15%** : Augmentation à 57.5% (campagne ambitieuse)
         
         ### Limites du modèle
-        Prophet suppose que les patterns historiques se répètent  
-        Ne prend PAS en compte : nouveaux variants, changements climatiques  
-        L'incertitude augmente avec l'horizon temporel
+        ⚠️ Prophet suppose que les patterns historiques se répètent  
+        ⚠️ Ne prend PAS en compte : nouveaux variants, changements climatiques  
+        ⚠️ L'incertitude augmente avec l'horizon temporel
         
         ### Méthodologie
         - **Modèle** : Prophet (Facebook AI Research)
@@ -1565,25 +1510,25 @@ if pages[page] == "predictions":
 # =============================================================================
 
 if pages[page] == "simulator":
-    st.markdown('<div class="main-header">Simulateur Enrichi</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">🎯 Simulateur Enrichi</div>', unsafe_allow_html=True)
     
-    st.markdown("### Simulateur d'Impact des Actions de Vaccination")
+    st.markdown("### 🏥 Simulateur d'Impact des Actions de Vaccination")
     
     # Sélection département
-    dept_selectionne = st.selectbox("Département", df_master['Département'].unique())
+    dept_selectionne = st.selectbox("📍 Département", df_master['Département'].unique())
     dept_info = df_master[df_master['Département'] == dept_selectionne].iloc[0]
     
     # Baseline
     st.markdown("---")
-    st.markdown("### État Actuel (Baseline)")
+    st.markdown("### 📊 État Actuel (Baseline)")
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Couverture", f"{dept_info['Couverture_65plus']:.1f}%")
+        st.metric("💉 Couverture", f"{dept_info['Couverture_65plus']:.1f}%")
     
     with col2:
-        st.metric("🏥 Urgences (pour 100k hab.)", f"{dept_info['Taux_Urgences_Moyen']:.1f}")
+        st.metric("🏥 Taux Urgences", f"{dept_info['Taux_Urgences_Moyen']:.1f}")
     
     with col3:
         st.metric("📊 Gap Vaccinal", f"{dept_info['Gap_Vaccinal']:.1f} pts")
@@ -1605,10 +1550,10 @@ if pages[page] == "simulator":
     st.markdown("---")
     
     # Configuration actions
-    st.markdown("### Configuration des Actions")
+    st.markdown("### ⚙️ Configuration des Actions")
     
-    tab1, tab2, tab3, tab4 = st.tabs(["Doses Vaccins", "Pharmacies", 
-                                       "SOS Médecins", "Communication"])
+    tab1, tab2, tab3, tab4 = st.tabs(["💉 Doses Vaccins", "🏪 Pharmacies", 
+                                       "🚑 SOS Médecins", "📣 Communication"])
     
     actions = {}
     
@@ -1677,9 +1622,9 @@ if pages[page] == "simulator":
     # Lancer simulation
 # Lancer simulation
 # Lancer simulation
-    if st.button("LANCER LA SIMULATION", type="primary", use_container_width=True):
+    if st.button("🚀 LANCER LA SIMULATION", type="primary", use_container_width=True):
         
-        with st.spinner("Calcul V3 en cours (Plafonds & Logarithmes)..."):
+        with st.spinner("⏳ Calcul V3 en cours (Plafonds & Logarithmes)..."):
             
             # --- 1. CALCUL IMPACT COUVERTURE (Vaccins + Pharmas + Comm) ---
             delta_couverture_potentiel = 0
@@ -1720,11 +1665,9 @@ if pages[page] == "simulator":
             
             # Total Urgences
             delta_urgences_total = delta_urg_vaccin + delta_urg_sos
-
+            
             # Impact hospitalisations (proportionnel aux urgences)
-            # Ratio réel hospit/urgences dans le département
-            ratio_hospit_urgences = dept_info['Taux_Hospit_Moyen'] / dept_info['Taux_Urgences_Moyen'] if dept_info['Taux_Urgences_Moyen'] > 0 else 0.3
-            delta_hospit = delta_urgences_total * ratio_hospit_urgences
+            delta_hospit = delta_urgences_total * (dept_info['Taux_Hospit_Moyen'] / 100)
             
             # Simulation Resultat
             simulation = {
@@ -1797,11 +1740,11 @@ if pages[page] == "simulator":
             benefice_total = benefice_total_moyen
             roi = roi_moyen
 
-        st.success(f"Simulation terminée ({N_SIMULATIONS} itérations Monte Carlo)")
+        st.success(f"✅ Simulation terminée ({N_SIMULATIONS} itérations Monte Carlo)")
         
         # Résultats
         st.markdown("---")
-        st.markdown("### Résultats de la Simulation (Monte Carlo)")
+        st.markdown("### 📊 Résultats de la Simulation (Monte Carlo)")
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -1810,7 +1753,7 @@ if pages[page] == "simulator":
                      f"+{delta_couverture:.1f} pts")
         
         with col2:
-            st.metric("🏥 Urgences (pour 100k hab.)", f"{simulation['urgences']:.1f}",
+            st.metric("🏥 Taux Urgences", f"{simulation['urgences']:.1f}", 
                      f"{delta_urgences:+.1f}")
         
         with col3:
@@ -1819,12 +1762,12 @@ if pages[page] == "simulator":
         with col4:
             roi_color = "normal" if roi > 0 else "inverse"
             # Affichage du ROI Moyen avec l'Intervalle de Confiance en petit
-            st.metric("ROI Moyen", f"{roi:+.0f}%", delta_color=roi_color,
+            st.metric("💰 ROI Moyen", f"{roi:+.0f}%", delta_color=roi_color,
                      help=f"Intervalle de confiance 95% : [{roi_ic_bas:.0f}% ; {roi_ic_haut:.0f}%]")
             st.caption(f"IC 95% : [{roi_ic_bas:.0f}% ; {roi_ic_haut:.0f}%]")
         
         # Graphique comparaison
-        st.markdown("### Comparaison Avant / Après")
+        st.markdown("### 📈 Comparaison Avant / Après")
         
         categories = ['Couverture 65+', 'Taux Urgences']
         avant = [dept_info['Couverture_65plus'], dept_info['Taux_Urgences_Moyen']]
@@ -1841,12 +1784,12 @@ if pages[page] == "simulator":
         st.plotly_chart(fig, key="sim_avant_apres", width="stretch")
         
         # Analyse financière
-        st.markdown("### Analyse Financière Probabiliste")
+        st.markdown("### 💰 Analyse Financière Probabiliste")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("#### Coûts (Estimés)")
+            st.markdown("#### 💸 Coûts (Estimés)")
             couts_data = []
             if actions['doses']['actif']:
                 # On affiche la moyenne pour le camembert
@@ -1866,10 +1809,10 @@ if pages[page] == "simulator":
                 fig.update_layout(height=300)
                 st.plotly_chart(fig, key="sim_couts_camembert", width="stretch")
             
-            st.metric("Coût Moyen", f"{cout_total:,.0f} €")
+            st.metric("💵 Coût Moyen", f"{cout_total:,.0f} €")
         
         with col2:
-            st.markdown("#### Bénéfices (Économies)")
+            st.markdown("#### 💎 Bénéfices (Économies)")
             # On utilise les moyennes pour le camembert
             ben_urg_moy = np.mean(vol_urgences_evitees * cout_urgence_sim)
             ben_hosp_moy = np.mean(vol_hospit_evitees * cout_hospit_sim)
@@ -1884,16 +1827,16 @@ if pages[page] == "simulator":
             fig.update_layout(height=300)
             st.plotly_chart(fig, key="sim_benefices_camembert", width="stretch")
             
-            st.metric("Bénéfice Moyen", f"{benefice_total:,.0f} €")
+            st.metric("💚 Bénéfice Moyen", f"{benefice_total:,.0f} €")
         
         # Interprétation
         st.markdown("---")
-        st.markdown("### Interprétation Stratégique")
+        st.markdown("### 💡 Interprétation Stratégique")
         
         # Logique d'interprétation adaptée à l'incertitude
         if roi_ic_bas > 0:
             st.success(f"""
-            **INVESTISSEMENT SÛR (ROI > 0% garanti)**
+            🎉 **INVESTISSEMENT SÛR (ROI > 0% garanti)**
             
             Même dans le scénario pessimiste (borne basse de l'intervalle de confiance), 
             le ROI reste positif à **{roi_ic_bas:.0f}%**.
@@ -1902,14 +1845,14 @@ if pages[page] == "simulator":
             """)
         elif roi > 0:
             st.warning(f"""
-            **INVESTISSEMENT À RISQUE MODÉRÉ**
+            ⚠️ **INVESTISSEMENT À RISQUE MODÉRÉ**
             
             Le ROI moyen est positif (**{roi:.0f}%**), mais il existe une probabilité de perte.
             L'intervalle de confiance s'étend de **{roi_ic_bas:.0f}%** à **{roi_ic_haut:.0f}%**.
             """)
         else:
             st.error(f"""
-            **INVESTISSEMENT NON RENTABLE**
+            ❌ **INVESTISSEMENT NON RENTABLE**
             
             Le ROI moyen est négatif (**{roi:.0f}%**). 
             Les coûts dépassent probablement les économies réalisées.
@@ -1920,16 +1863,16 @@ if pages[page] == "simulator":
 # =============================================================================
 
 if pages[page] == "export":
-    st.markdown('<div class="main-header">Export & Rapports</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">📥 Export & Rapports</div>', unsafe_allow_html=True)
     
-    st.markdown("### Télécharger les Données")
+    st.markdown("### 📊 Télécharger les Données")
     
     col1, col2 = st.columns(2)
     
     with col1:
         csv_master = df_master.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
-            label="Télécharger Dataset Maître (CSV)",
+            label="📥 Télécharger Dataset Maître (CSV)",
             data=csv_master,
             file_name=f"master_dataset_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv"
@@ -1939,29 +1882,29 @@ if pages[page] == "export":
         df_critiques = df_master[df_master['Catégorie_Risque'] == 'Critique']
         csv_critiques = df_critiques.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
-            label="Télécharger Départements Critiques (CSV)",
+            label="🚨 Télécharger Départements Critiques (CSV)",
             data=csv_critiques,
             file_name=f"departements_critiques_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv"
         )
     
     st.markdown("---")
-    st.markdown("### Statistiques d'Export")
+    st.markdown("### 📊 Statistiques d'Export")
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Lignes Dataset", len(df_master))
+        st.metric("📂 Lignes Dataset", len(df_master))
     
     with col2:
-        st.metric("Départements Critiques", len(df_critiques))
+        st.metric("🚨 Départements Critiques", len(df_critiques))
     
     with col3:
-        st.metric("Colonnes", len(df_master.columns))
+        st.metric("📊 Colonnes", len(df_master.columns))
     
     with col4:
         taille_mo = len(csv_master) / 1024 / 1024
-        st.metric("Taille", f"{taille_mo:.2f} MB")
+        st.metric("💾 Taille", f"{taille_mo:.2f} MB")
 
 # =============================================================================
 # FOOTER
@@ -1970,7 +1913,7 @@ if pages[page] == "export":
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 1.5rem 0;">
-    <p style="font-size: 1.1rem; font-weight: bold;">Hackathon Stratégie Vaccinale Grippe 💉</p>
+    <p style="font-size: 1.1rem; font-weight: bold;">🦠 Hackathon Stratégie Vaccinale Grippe 💉</p>
     <p>Dashboard Complet - 5 Pages Fonctionnelles</p>
     <p style="font-size: 0.9rem; color: #999;">
         Données : Santé Publique France | Année : 2011 - 2024

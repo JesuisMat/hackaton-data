@@ -25,8 +25,8 @@ warnings.filterwarnings('ignore')
 # CONFIGURATION
 # =============================================================================
 st.set_page_config(
-    page_title="Stratégie Vaccinale Grippe",
-    page_icon="📊",
+    page_title="Kaironis - Stratégie Vaccinale Grippe",
+    page_icon="🟣",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -75,9 +75,15 @@ st.markdown("""
         border-bottom: 1px solid var(--border-color);
     }
 
-    /* Cacher le bouton hamburger menu (optionnel) */
+    /* Masquer le bouton hamburger menu Streamlit */
     button[kind="header"] {
-        display: none;
+        display: none !important;
+    }
+
+    /* Masquer le menu hamburger et ses tooltips */
+    [data-testid="stSidebarNav"],
+    [data-testid="collapsedControl"] {
+        display: none !important;
     }
 
     /* Header principal */
@@ -191,7 +197,7 @@ st.markdown("""
 
     /* Multiselect tags dans sidebar */
     section[data-testid="stSidebar"] [data-baseweb="tag"] {
-        background-color: var(--bleu-france) !important;
+        background-color: white !important;
         color: white !important;
         border-radius: 100px;
         padding: 0.25rem 0.5rem;
@@ -376,14 +382,311 @@ st.markdown("""
         padding: 1rem;
         border-radius: 8px;
     }
+
+    /* Toggle Vue Expert/Vulgarisée - Position fixe en haut à droite */
+    .view-toggle-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 9999;
+        background: white;
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 0.5rem 1rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .view-toggle-label {
+        font-size: 0.875rem;
+        font-weight: 700;
+        color: black;
+    }
+
+    .view-toggle-btn {
+        background: var(--background-grey);
+        border: 2px solid var(--bleu-france);
+        border-radius: 20px;
+        padding: 0.4rem 1rem;
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: var(--bleu-france);
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .view-toggle-btn:hover {
+        background: var(--bleu-france);
+        color: white;
+    }
+
+    .view-toggle-btn.active {
+        background: var(--bleu-france);
+        color: white;
+    }
+
+    /* Boîte d'explication vulgarisée */
+    .explain-box {
+        background: linear-gradient(135deg, #f0f4ff 0%, #e8f0ff 100%);
+        border-left: 4px solid var(--bleu-france);
+        border-radius: 8px;
+        padding: 1rem 1.25rem;
+        margin: 1rem 0;
+        font-size: 0.9rem;
+        line-height: 1.6;
+    }
+
+    .explain-box h4 {
+        color: var(--bleu-france) !important;
+        margin-top: 0 !important;
+        margin-bottom: 0.5rem !important;
+        font-size: 1rem !important;
+    }
+
+    .explain-box p {
+        margin: 0.5rem 0;
+        color: #333 !important;
+    }
+
+    .explain-box ul {
+        margin: 0.5rem 0;
+        padding-left: 1.5rem;
+    }
+
+    .explain-box li {
+        margin: 0.25rem 0;
+        color: #333 !important;
+    }
+
+    /* Badge info */
+    .info-badge {
+        display: inline-block;
+        background: var(--bleu-france);
+        color: white;
+        padding: 0.25rem 0.75rem;
+        border-radius: 100px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        margin-left: 0.5rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialisation des modèles dans session_state
+# Initialisation session_state
 if 'model_temp' not in st.session_state:
     st.session_state.model_temp = None
 if 'model_doses' not in st.session_state:
     st.session_state.model_doses = None
+if 'vue_mode' not in st.session_state:
+    st.session_state.vue_mode = 'expert'  # Par défaut: vue expert (complexe)
+
+# =============================================================================
+# FONCTIONS AIDE & EXPLICATIONS VULGARISÉES
+# =============================================================================
+
+def show_explanation(key):
+    """Affiche une explication vulgarisée selon la clé"""
+    explanations = {
+        'couverture': {
+            'title': 'Qu\'est-ce que la Couverture Vaccinale ?',
+            'content': '''
+La **couverture vaccinale** représente le pourcentage de personnes de 65 ans et plus qui ont été vaccinées contre la grippe.
+
+**Pourquoi c'est important ?**
+- Plus ce chiffre est élevé, mieux la population âgée est protégée
+- L'objectif recommandé par l'OMS est d'atteindre **75%**
+- En France, la moyenne actuelle tourne autour de **50-55%**
+
+**Exemple concret :** Une couverture de 43.8% signifie que sur 100 personnes de 65 ans et plus, environ 44 ont été vaccinées.
+            '''
+        },
+        'taux_urgences': {
+            'title': 'Passages aux Urgences : Que signifie ce chiffre ?',
+            'content': '''
+Ce chiffre représente le **nombre de passages aux urgences pour grippe pour 100 000 habitants**.
+
+**Comment le lire ?**
+- Un taux de 1024.2 signifie qu'il y a eu 1024 passages aux urgences pour grippe pour 100 000 personnes
+- Plus ce chiffre est élevé, plus il y a de cas graves de grippe nécessitant une consultation urgente
+- Ce taux varie beaucoup selon les départements et les saisons
+
+**Contexte :** Les zones urbaines denses ont généralement des taux plus élevés car il y a plus de transmission du virus.
+            '''
+        },
+        'gap_vaccinal': {
+            'title': 'Gap Vaccinal : L\'écart à combler',
+            'content': '''
+Le **gap vaccinal** mesure la différence entre le taux de couverture actuel et l'objectif de 75% recommandé par l'OMS.
+
+**Calcul simple :**
+- Gap = 75% - Couverture actuelle
+- Exemple : Si couverture = 43.8%, alors Gap = 75% - 43.8% = 31.2 points
+
+**Pourquoi c'est utile ?**
+- Indique l'effort à fournir pour atteindre l'objectif
+- Permet de prioriser les départements où l'écart est le plus important
+- Un gap élevé = marge d'amélioration importante = impact potentiel élevé des campagnes de vaccination
+            '''
+        },
+        'score_impact': {
+            'title': 'Score d\'Impact : Mesure de l\'urgence sanitaire',
+            'content': '''
+Le **score d'impact** combine plusieurs facteurs pour évaluer la gravité de la situation grippale dans un département.
+
+**Comment est-il calculé ?**
+Il prend en compte :
+- Le nombre de passages aux urgences pour grippe
+- Le taux de couverture vaccinale (avec un effet décalé de 2 semaines)
+- La formule : Passages urgences × log(1 + (100 - Couverture))
+
+**Pourquoi cette formule ?**
+- Plus il y a de passages aux urgences, plus le score est élevé
+- Plus la couverture est faible, plus le score est élevé
+- Le logarithme permet d'équilibrer les différents facteurs
+
+**Lecture :** Un score élevé indique une situation préoccupante nécessitant une action prioritaire.
+            '''
+        },
+        'categorie_risque': {
+            'title': 'Catégories de Risque : Prioriser l\'action',
+            'content': '''
+Les départements sont classés en 4 catégories selon plusieurs critères combinés.
+
+**Les 4 niveaux :**
+- 🔴 **Critique** : Situation très préoccupante, action immédiate requise
+- 🟠 **Élevé** : Situation préoccupante, intervention prioritaire
+- 🟡 **Moyen** : Surveillance nécessaire, actions ciblées
+- 🟢 **Faible** : Situation maîtrisée, maintien des efforts
+
+**Critères pris en compte :**
+- Score d'impact sanitaire
+- Gap vaccinal (écart par rapport à l'objectif)
+- Taux d'hospitalisations
+- Indice de vulnérabilité de la population
+
+**Utilité :** Permet de concentrer les ressources là où elles sont le plus nécessaires.
+            '''
+        },
+        'predictions_ml': {
+            'title': 'Prédictions Machine Learning : Anticiper l\'avenir',
+            'content': '''
+Le **Machine Learning** (apprentissage automatique) est une technique qui permet à un ordinateur d'apprendre des tendances passées pour prédire le futur.
+
+**Comment ça marche ?**
+1. L'algorithme analyse les données des années précédentes (passages aux urgences, saisons, couverture vaccinale...)
+2. Il identifie des **motifs répétitifs** (ex: pic hivernal, effet de la vaccination...)
+3. Il projette ces tendances dans le futur pour estimer les valeurs futures
+
+**Modèle utilisé : Prophet**
+- Développé par Meta (Facebook)
+- Spécialisé dans les données temporelles avec saisonnalité
+- Prend en compte les tendances, la saisonnalité et les jours spéciaux
+
+**Zone de confiance :**
+- La zone bleu clair montre l'**intervalle de confiance à 95%**
+- Cela signifie : "On est sûr à 95% que la valeur réelle sera dans cette zone"
+- Plus on prédit loin dans le futur, plus l'incertitude augmente
+
+**Important :** Ces prédictions sont des estimations basées sur les tendances passées. Des événements imprévus peuvent modifier ces prévisions.
+            '''
+        },
+        'roi': {
+            'title': 'ROI : Retour sur Investissement',
+            'content': '''
+Le **ROI (Return On Investment)** mesure si une campagne de vaccination est rentable économiquement.
+
+**Calcul simple :**
+- ROI = ((Bénéfices - Coûts) / Coûts) × 100
+- Exemple : ROI de +150% signifie que pour 1€ investi, on économise 2,50€
+
+**Coûts pris en compte :**
+- Prix des doses de vaccin (~12€/dose)
+- Campagnes de communication
+- Dispositifs SOS Médecins
+
+**Bénéfices :**
+- Réduction des passages aux urgences évités
+- Réduction des hospitalisations évitées
+- Coût moyen d'un passage aux urgences : ~150€
+- Coût moyen d'une hospitalisation : ~3000€
+
+**Méthode Monte Carlo :**
+Nous effectuons 10 000 simulations avec des variations aléatoires des coûts et bénéfices pour calculer un ROI moyen et un intervalle de confiance.
+
+**Lecture :**
+- ROI positif = La campagne est rentable
+- ROI négatif = La campagne coûte plus qu'elle ne rapporte (mais peut se justifier pour d'autres raisons sanitaires)
+            '''
+        },
+        'indice_vulnerabilite': {
+            'title': 'Indice de Vulnérabilité : Identifier les populations fragiles',
+            'content': '''
+L'**indice de vulnérabilité** évalue dans quelle mesure une population est exposée et sensible à la grippe.
+
+**Facteurs pris en compte :**
+- Taux de passages aux urgences (exposition au virus)
+- Gap vaccinal (manque de protection)
+- Taux d'hospitalisations (gravité des cas)
+
+**Normalisation :**
+Les valeurs sont normalisées sur une échelle de 0 à 100 en utilisant le 95e percentile (les 5% de valeurs les plus élevées définissent le maximum).
+
+**Pondération :**
+- 50% : Taux d'urgences
+- 20% : Gap vaccinal
+- 30% : Taux d'hospitalisations
+
+**Utilité :**
+- Identifier les zones où la population est la plus fragile
+- Prioriser les actions de prévention
+- Adapter les ressources selon les besoins locaux
+            '''
+        },
+        'simulation': {
+            'title': 'Simulateur : Testez différents scénarios',
+            'content': '''
+Le **simulateur** permet de tester l'impact de différentes actions sur la situation sanitaire et le budget.
+
+**Actions disponibles :**
+
+**1. 💉 Campagne de Vaccination Ciblée**
+- Cible les personnes de 65 ans et plus non vaccinées
+- Impact : Augmente la couverture vaccinale (+5 à +15 points selon l'intensité)
+- Effet indirect : Réduit les passages aux urgences (-0.65 par point de couverture gagné)
+
+**2. 📢 Communication Publique**
+- Campagnes d'information grand public (TV, radio, réseaux sociaux)
+- Impact : Augmente la sensibilisation et l'adhésion (+3 à +8 points de couverture)
+
+**3. 🚑 Renforcement SOS Médecins**
+- Dispositif de consultation à domicile pour éviter les urgences
+- Impact direct : Réduit les passages aux urgences (-5 à -15 urgences/100k hab.)
+- Pas d'effet sur la vaccination mais soulage les hôpitaux
+
+**Coefficient -0.65 :**
+C'est le **coefficient de corrélation** calculé sur les données historiques : en moyenne, +1 point de couverture vaccinale = -0.65 passage aux urgences pour 100k hab.
+
+**Plafond 70% :**
+Les études montrent qu'il est très difficile de dépasser 70% de couverture même avec des campagnes intenses (réticences, contre-indications médicales, personnes difficiles à atteindre).
+            '''
+        }
+    }
+
+    if key in explanations:
+        exp = explanations[key]
+        st.markdown(f"""
+        <div class="explain-box">
+            <h4>{exp['title']}</h4>
+            <p>{exp['content'].strip()}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+def is_simple_mode():
+    """Retourne True si on est en mode vulgarisé"""
+    return st.session_state.vue_mode == 'simple'
+
 # =============================================================================
 # FONCTIONS DE CHARGEMENT
 # =============================================================================
@@ -860,11 +1163,65 @@ st.sidebar.info(f"""
 """)
 
 # =============================================================================
+# TOGGLE VUE EXPERT/VULGARISÉE (commun à toutes les pages)
+# =============================================================================
+
+# Bouton toggle style .gouv.fr sobre
+st.markdown('<div style="height: 1rem;"></div>', unsafe_allow_html=True)  # Espacement du haut
+col_toggle_left, col_toggle_right = st.columns([5, 2])
+with col_toggle_right:
+    # Badge cliquable pour basculer de mode
+    current_mode = "Vue Vulgarisée" if is_simple_mode() else "Vue Expert"
+
+    # Créer un conteneur avec une classe unique pour cibler le CSS
+    st.markdown('<div class="toggle-mode-container">', unsafe_allow_html=True)
+
+    # CSS pour styliser le bouton comme le badge bleu
+    st.markdown("""
+    <style>
+    /* Style du bouton toggle en badge bleu */
+    .toggle-mode-container + div button {
+        background: white !important;
+        color: #000091 !important;
+        border: 1px solid #000091 !important;
+        padding: 0.35rem 0.75rem !important;
+        border-radius: 4px !important;
+        font-size: 0.8rem !important;
+        font-weight: 700 !important;
+        transition: all 0.2s ease !important;
+        width: auto !important;
+        float: right !important;
+    }
+    .toggle-mode-container + div button:hover {
+        background: #000091 !important;
+        color: white !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    if st.button(f"Mode : {current_mode}", key="toggle_vue", help="Cliquer pour basculer entre la vue technique et la vue expliquée"):
+        st.session_state.vue_mode = 'simple' if st.session_state.vue_mode == 'expert' else 'expert'
+        st.rerun()
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# =============================================================================
 # PAGE 1 : TABLEAU DE BORD
 # =============================================================================
 
 if pages[page] == "dashboard":
     st.markdown('<div class="main-header">Tableau de Bord Stratégique</div>', unsafe_allow_html=True)
+
+    # Explication en mode vulgarisé
+    if is_simple_mode():
+        st.markdown("""
+        <div class="explain-box">
+            <h4>Bienvenue sur le Tableau de Bord</h4>
+            <p>Cette page présente une <strong>vue d'ensemble de la situation vaccinale et sanitaire</strong> concernant la grippe en France.</p>
+            <p><strong>Les chiffres clés en haut</strong> vous donnent un aperçu rapide de la situation nationale.
+            <strong>Les graphiques ci-dessous</strong> vous permettent d'explorer les détails par région, département et dans le temps.</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     # KPIs
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -889,8 +1246,21 @@ if pages[page] == "dashboard":
     
     with col5:
         doses_totales = df_master['Doses_Necessaires'].sum()
-        st.metric("Doses Nécessaires", f"{doses_totales/1000:.0f}k", "objectif 75%")
-    
+        st.metric("Doses Nécessaires", f"{doses_totales/1000:.0f}k", "objectif 50%")
+
+    # Explications KPIs en mode vulgarisé
+    if is_simple_mode():
+        st.markdown("""
+        <div class="explain-box">
+            <h4>Comprendre les chiffres clés</h4>
+            <p><strong>Couverture Moyenne 65+</strong> : Pourcentage moyen de personnes de 65 ans et plus vaccinées. L'objectif OMS est de 75%.</p>
+            <p><strong>Passages Urgences</strong> : Total cumulé des passages aux urgences pour grippe (pour 100 000 habitants).</p>
+            <p><strong>Dép. Critiques</strong> : Nombre de départements en situation critique nécessitant une action immédiate.</p>
+            <p><strong>Potentiel Réduction</strong> : Nombre de passages aux urgences qui pourraient être évités en atteignant l'objectif de 75% de couverture.</p>
+            <p><strong>Doses Nécessaires</strong> : Nombre de doses de vaccin nécessaires pour atteindre l'objectif de 75% partout.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
     st.markdown("---")
     
     # Tabs
@@ -900,6 +1270,17 @@ if pages[page] == "dashboard":
     
     with tab1:
         st.markdown("### Évolution Temporelle")
+
+        if is_simple_mode():
+            st.markdown("""
+            <div class="explain-box">
+                <h4>Évolution dans le temps</h4>
+                <p>Ce graphique montre <strong>comment les indicateurs évoluent au fil des semaines et des années</strong>.</p>
+                <p><strong>Saisonnalité de la grippe :</strong> Vous observerez des pics chaque hiver (décembre-février) et des creux en été.</p>
+                <p>Utilisez les filtres pour comparer différentes échelles géographiques (France entière, régions, départements).</p>
+            </div>
+            """, unsafe_allow_html=True)
+
         col1, col2 = st.columns([3, 1])
         
         with col1:
@@ -1086,9 +1467,25 @@ if pages[page] == "dashboard":
 
 elif pages[page] == "map":
     st.markdown('<div class="main-header">Cartographie Intelligente</div>', unsafe_allow_html=True)
-    
+
     st.markdown("### Carte Interactive de France")
-    
+
+    # Explication mode vulgarisé
+    if is_simple_mode():
+        st.markdown("""
+        <div class="explain-box">
+            <h4>Carte Interactive : Visualiser les disparités territoriales</h4>
+            <p>Cette carte vous permet de <strong>visualiser géographiquement les différences entre départements</strong>.</p>
+            <p><strong>Comment l'utiliser :</strong></p>
+            <ul>
+                <li>Sélectionnez l'indicateur que vous souhaitez observer (couverture, urgences, gap vaccinal...)</li>
+                <li>Les couleurs indiquent l'intensité : du vert (faible) au rouge (élevé)</li>
+                <li>Passez la souris sur un département pour voir les détails</li>
+            </ul>
+            <p><strong>Utilité :</strong> Identifier rapidement les zones prioritaires d'intervention et les inégalités territoriales.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
     # Sélection indicateur
     indicateur_carte = st.selectbox("Indicateur à afficher", [
         'Score_Impact', 'Priorité_Action', 'Couverture_65plus', 
@@ -1147,38 +1544,45 @@ elif pages[page] == "map":
         
         st.plotly_chart(fig, key="carte_france", width="stretch")
         
-        # Stats
+        # Stats - Style sobre .gouv.fr
         col1, col2, col3 = st.columns(3)
-        
+
+        top_dept = df_map.loc[df_map[indicateur_carte].idxmax()]
+        bottom_dept = df_map.loc[df_map[indicateur_carte].idxmin()]
+        mean_val = df_map[indicateur_carte].mean()
+
         with col1:
-            top_dept = df_map.loc[df_map[indicateur_carte].idxmax()]
-            st.error(f"""
-            **Maximum**
-            
-            {top_dept['Département']}
-            
-            {labels[indicateur_carte]}: **{top_dept[indicateur_carte]:.1f}**
-            """)
-        
+            st.markdown(f"""
+            <div style="background: #FFF5F5; border-left: 4px solid #CE0500; padding: 1rem; border-radius: 4px;">
+                <div style="font-weight: 700; font-size: 0.85rem; color: #CE0500; margin-bottom: 0.5rem;">MAXIMUM</div>
+                <div style="font-size: 1.1rem; font-weight: 700; color: black; margin-bottom: 0.25rem;">{top_dept['Département']}</div>
+                <div style="font-size: 0.9rem; color: #666;">
+                    {labels[indicateur_carte]}: <strong style="color: black;">{top_dept[indicateur_carte]:.1f}</strong>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
         with col2:
-            bottom_dept = df_map.loc[df_map[indicateur_carte].idxmin()]
-            st.success(f"""
-            **Minimum**
-            
-            {bottom_dept['Département']}
-            
-            {labels[indicateur_carte]}: **{bottom_dept[indicateur_carte]:.1f}**
-            """)
-        
+            st.markdown(f"""
+            <div style="background: #F0F9FF; border-left: 4px solid #000091; padding: 1rem; border-radius: 4px;">
+                <div style="font-weight: 700; font-size: 0.85rem; color: #000091; margin-bottom: 0.5rem;">MINIMUM</div>
+                <div style="font-size: 1.1rem; font-weight: 700; color: black; margin-bottom: 0.25rem;">{bottom_dept['Département']}</div>
+                <div style="font-size: 0.9rem; color: #666;">
+                    {labels[indicateur_carte]}: <strong style="color: black;">{bottom_dept[indicateur_carte]:.1f}</strong>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
         with col3:
-            mean_val = df_map[indicateur_carte].mean()
-            st.warning(f"""
-            **Moyenne**
-            
-            Nationale
-            
-            {labels[indicateur_carte]}: **{mean_val:.1f}**
-            """)
+            st.markdown(f"""
+            <div style="background: #F6F6F6; border-left: 4px solid #666; padding: 1rem; border-radius: 4px;">
+                <div style="font-weight: 700; font-size: 0.85rem; color: #666; margin-bottom: 0.5rem;">MOYENNE</div>
+                <div style="font-size: 1.1rem; font-weight: 700; color: black; margin-bottom: 0.25rem;">Nationale</div>
+                <div style="font-size: 0.9rem; color: #666;">
+                    {labels[indicateur_carte]}: <strong style="color: black;">{mean_val:.1f}</strong>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
     
     except Exception as e:
         st.error(f"Erreur carte : {e}")
@@ -1209,8 +1613,12 @@ elif pages[page] == "map":
 # =============================================================================
 
 if pages[page] == "predictions":
-    st.markdown('<div class="main-header">Prédictions avec Prophet</div>', unsafe_allow_html=True)
-    
+    st.markdown('<div class="main-header">Prédictions</div>', unsafe_allow_html=True)
+
+    # Explication mode vulgarisé
+    if is_simple_mode():
+        show_explanation('predictions_ml')
+
     # === VÉRIFICATION MODÈLES PROPHET ===
     @st.cache_resource
     def load_prophet_models():
@@ -1349,10 +1757,10 @@ if pages[page] == "predictions":
             data_aligned = data_national.merge(historical_forecast[['ds', 'yhat']], on='ds')
             mae = np.mean(np.abs(data_aligned['y'] - data_aligned['yhat']))
             
-            col1, col2, col3 = st.columns(3)
-            col1.metric("MAE (Erreur Absolue)", f"{mae:.2f}%")
-            col2.metric("Semaines prédites", f"{periods}")
-            col3.metric("Scénario", st.session_state['scenario_nat'])
+            col1, col2 = st.columns(2)
+        
+            col1.metric("Semaines prédites", f"{periods}")
+            col2.metric("Scénario", st.session_state['scenario_nat'])
             
             # Graphique principal
             st.markdown("#### Prédictions vs Historique")
@@ -1566,9 +1974,13 @@ if pages[page] == "predictions":
 
 if pages[page] == "simulator":
     st.markdown('<div class="main-header">Simulateur Enrichi</div>', unsafe_allow_html=True)
-    
+
     st.markdown("### Simulateur d'Impact des Actions de Vaccination")
-    
+
+    # Explication mode vulgarisé
+    if is_simple_mode():
+        show_explanation('simulation')
+
     # Sélection département
     dept_selectionne = st.selectbox("Département", df_master['Département'].unique())
     dept_info = df_master[df_master['Département'] == dept_selectionne].iloc[0]
@@ -1603,11 +2015,26 @@ if pages[page] == "simulator":
         """, unsafe_allow_html=True)
     
     st.markdown("---")
-    
+
     # Configuration actions
     st.markdown("### Configuration des Actions")
-    
-    tab1, tab2, tab3, tab4 = st.tabs(["Doses Vaccins", "Pharmacies", 
+
+    if is_simple_mode():
+        st.markdown("""
+        <div class="explain-box">
+            <h4>Configurez vos actions</h4>
+            <p>Choisissez les leviers d'action que vous souhaitez tester :</p>
+            <ul>
+                <li><strong>Doses Vaccins</strong> : Distribution de vaccins ciblée sur les 65+</li>
+                <li><strong>Pharmacies</strong> : Points de vaccination supplémentaires en pharmacie</li>
+                <li><strong>SOS Médecins</strong> : Équipes pour éviter l'engorgement des urgences</li>
+                <li><strong>Communication</strong> : Campagnes d'information pour sensibiliser</li>
+            </ul>
+            <p>L'algorithme calculera automatiquement l'impact combiné de ces actions sur la couverture vaccinale, les passages aux urgences et le retour sur investissement (ROI).</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    tab1, tab2, tab3, tab4 = st.tabs(["Doses Vaccins", "Pharmacies",
                                        "SOS Médecins", "Communication"])
     
     actions = {}
@@ -1802,7 +2229,11 @@ if pages[page] == "simulator":
         # Résultats
         st.markdown("---")
         st.markdown("### Résultats de la Simulation (Monte Carlo)")
-        
+
+        # Explication ROI en mode vulgarisé
+        if is_simple_mode():
+            show_explanation('roi')
+
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
@@ -1970,7 +2401,7 @@ if pages[page] == "export":
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 1.5rem 0;">
-    <p style="font-size: 1.1rem; font-weight: bold;">Hackathon Stratégie Vaccinale Grippe 💉</p>
+    <p style="font-size: 1.1rem; font-weight: bold;">KAIRONIS</p>
     <p>Dashboard Complet - 5 Pages Fonctionnelles</p>
     <p style="font-size: 0.9rem; color: #999;">
         Données : Santé Publique France | Année : 2011 - 2024
